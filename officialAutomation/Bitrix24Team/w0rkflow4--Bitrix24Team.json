@@ -1,0 +1,236 @@
+{
+  "name": "w0rkflow4--Bitrix24Team",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 11 * * 1-6"
+            }
+          ]
+        }
+      },
+      "id": "df460e36-ed78-4b31-99b7-912dc541c2f6",
+      "name": "Schedule Trigger 11AM IST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -832,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst MAIN_WEBHOOK      = 'https://intranet.rajlaxmiworld.com/rest/316/du14lqdt4ijmvzx4';\nconst ACTIVITY_WEBHOOK  = 'https://intranet.rajlaxmiworld.com/rest/71603/jqz6l15bjdnyx803';\nconst BITRIX_DOMAIN     = 'https://intranet.rajlaxmiworld.com';\nconst HOD_NAME          = 'Dr. Aarti Arya';\nconst HOD_EMAIL         = 'dr.aartiarya@rajlaxmiworld.com';\nconst TARGET_DEPARTMENT = 'Bitrix24 Team';\nconst CC_EMAIL = 'bhagwati@rajlaxmiworld.com';\nconst SENDER_NAME       = 'Averlon System';\n\nconst IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;\nconst nowIST        = new Date(Date.now() + IST_OFFSET_MS);\nconst todayStr      = nowIST.toISOString().slice(0, 10);\n\nfunction parseDateStr(str) {\n  const [y, m, d] = str.split('-').map(Number);\n  return new Date(y, m - 1, d);\n}\nfunction parseBitrixDate(dateStr) {\n  if (!dateStr) return null;\n  const part = new Date(dateStr).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });\n  return parseDateStr(part);\n}\nfunction formatDate(dateStr) {\n  const d = parseBitrixDate(dateStr);\n  if (!d) return '\\u2014';\n  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });\n}\n\nconst today          = parseDateStr(todayStr);\nconst windowStart    = new Date(today); windowStart.setDate(windowStart.getDate() - 30);\nconst windowStartStr = windowStart.toISOString().slice(0, 10);\nconst yesterdayStr   = new Date(today.getTime() - 86400000).toISOString().slice(0, 10);\n\nconst deptRes = await this.helpers.request({ method: 'GET', url: `${MAIN_WEBHOOK}/department.get.json`, json: true });\nconst deptMap = {};\nfor (const d of (deptRes.result || [])) deptMap[String(d.ID)] = d.NAME || '';\nconst targetDeptIds = Object.entries(deptMap)\n  .filter(([, name]) => name.toLowerCase().includes(TARGET_DEPARTMENT.toLowerCase()))\n  .map(([id]) => id);\nif (targetDeptIds.length === 0) throw new Error(`Dept \"${TARGET_DEPARTMENT}\" not found`);\n\nlet allUsers = [], uStart = 0, uMore = true;\nwhile (uMore) {\n  const res = await this.helpers.request({ method: 'GET', url: `${MAIN_WEBHOOK}/user.get.json?filter[ACTIVE]=true&start=${uStart}`, json: true });\n  allUsers = allUsers.concat(res.result || []);\n  uMore = !!(res.next && (res.result || []).length > 0);\n  if (uMore) uStart = res.next;\n}\nconst userMap = {};\nfor (const u of allUsers) {\n  const uid = String(u.ID);\n  const userDeptIds = Array.isArray(u.UF_DEPARTMENT) ? u.UF_DEPARTMENT.map(String) : (u.UF_DEPARTMENT ? [String(u.UF_DEPARTMENT)] : []);\n  if (!userDeptIds.some(d => targetDeptIds.includes(d))) continue;\n  let email = Array.isArray(u.EMAIL) ? (u.EMAIL[0]?.VALUE || '') : (u.EMAIL || '');\n  userMap[uid] = { id: uid, name: `${u.NAME || ''} ${u.LAST_NAME || ''}`.trim(), email: email.trim() };\n}\n\nlet allDeals = [], dStart = 0, dMore = true;\nwhile (dMore) {\n  const res = await this.helpers.request({\n    method: 'GET',\n    url: `${ACTIVITY_WEBHOOK}/crm.deal.list.json?filter[CLOSED]=N&select[]=ID&select[]=TITLE&select[]=OPPORTUNITY&select[]=CURRENCY_ID&start=${dStart}`,\n    json: true\n  });\n  allDeals = allDeals.concat(res.result || []);\n  dMore = !!(res.next && (res.result || []).length > 0);\n  if (dMore) dStart = res.next;\n}\nconst dealMap = {};\nfor (const d of allDeals) dealMap[String(d.ID)] = d;\n\nconst grouped = {};\nfor (const uid of Object.keys(userMap)) {\n  let aStart = 0, aMore = true;\n  while (aMore) {\n    const res = await this.helpers.request({\n      method: 'GET',\n      url: `${ACTIVITY_WEBHOOK}/crm.activity.list.json` +\n           `?filter[RESPONSIBLE_ID]=${uid}` +\n           `&filter[COMPLETED]=N` +\n           `&filter[>=DEADLINE]=${windowStartStr}` +\n           `&filter[<=DEADLINE]=${yesterdayStr}` +\n           `&select[]=ID&select[]=SUBJECT&select[]=DEADLINE&select[]=RESPONSIBLE_ID` +\n           `&select[]=TYPE_ID&select[]=OWNER_ID&select[]=OWNER_TYPE_ID` +\n           `&start=${aStart}`,\n      json: true\n    });\n    const batch = res.result || [];\n    for (const act of batch) {\n      const d = parseBitrixDate(act.DEADLINE);\n      if (!d || d >= today) continue;\n      const ownerTypeId = String(act.OWNER_TYPE_ID || '');\n      const ownerId     = String(act.OWNER_ID || '');\n      const deal        = ownerTypeId === '2' ? dealMap[ownerId] : null;\n      const daysOv      = Math.floor((today - d) / 86400000);\n      if (!grouped[uid]) grouped[uid] = { employee: userMap[uid], deals: [] };\n      grouped[uid].deals.push({\n        title:       deal ? (deal.TITLE || `Deal #${ownerId}`) : (act.SUBJECT || 'No Subject'),\n        dueDate:     formatDate(act.DEADLINE),\n        amount:      deal ? `${deal.OPPORTUNITY || 0} ${deal.CURRENCY_ID || ''}`.trim() : '\\u2014',\n        status:      `Overdue by ${daysOv} day(s)`,\n        daysOverdue: daysOv,\n        url:         ownerTypeId === '2' ? `${BITRIX_DOMAIN}/crm/deal/details/${ownerId}/` : `${BITRIX_DOMAIN}/crm/`\n      });\n    }\n    aMore = !!(res.next && batch.length > 0);\n    if (aMore) aStart = res.next;\n  }\n}\n\nconst employeeGroups = Object.values(grouped).filter(e => e.deals.length > 0);\n\nreturn [{\n  json: {\n    hodName:        HOD_NAME,\n    hodEmail:       HOD_EMAIL,\n     ccEmail:        CC_EMAIL, \n    senderName:     SENDER_NAME,\n    runDate:        todayStr,\n    hasDeals:       employeeGroups.length > 0,\n    employeeGroups,\n    totalEmployees: employeeGroups.length,\n    totalDeals:     employeeGroups.reduce((s, e) => s + e.deals.length, 0)\n  }\n}];\n"
+      },
+      "id": "836f50bc-b908-4fce-be88-78a818dbfbec",
+      "name": "Fetch and Group Overdue Deals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "39b2cfdd-4a33-4867-9ae7-975b050d47de",
+              "leftValue": "={{ $json.hasDeals }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f6bbbe4a-fbf2-4f79-b3f8-bdc1032b1317",
+      "name": "Has Overdue Deals",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -272,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst data = $json;\nconst { employeeGroups, hodName, runDate, totalEmployees, totalDeals, senderName , ccEmail } = data;\n\nfunction esc(str = '') {\n  return String(str).replace(/[&<>\"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[s]));\n}\n\nconst blocks = employeeGroups.map(({ employee, deals }) => {\n  const rows = deals.map(d => `<tr style=\"border-bottom:1px solid #f0ede6;\"><td style=\"padding:10px 8px;font-size:13px;color:#2c2c2a;\">${esc(d.title)}</td><td style=\"padding:10px 8px;font-size:13px;color:#5f5e5a;white-space:nowrap;\">${esc(d.dueDate)}</td><td style=\"padding:10px 8px;font-size:13px;color:#5f5e5a;\">${esc(d.amount)}</td><td style=\"padding:10px 8px;font-size:12px;color:#A32D2D;font-weight:600;\">${esc(d.status)}</td></tr>`).join('');\n  return `<div style=\"margin-bottom:24px;border:1px solid #e0ddd6;border-radius:10px;overflow:hidden;\"><div style=\"background:#f7f5f0;padding:12px 20px;border-bottom:1px solid #e0ddd6;\"><span style=\"font-size:15px;font-weight:600;color:#2c2c2a;\">${esc(employee.name)}</span><span style=\"font-size:12px;color:#888780;margin-left:10px;\">${deals.length} overdue deal(s)</span></div><table style=\"width:100%;border-collapse:collapse;\"><thead><tr style=\"background:#faf9f6;\"><th style=\"padding:9px 8px;text-align:left;font-size:11px;color:#888780;font-weight:600;\">DEAL NAME</th><th style=\"padding:9px 8px;text-align:left;font-size:11px;color:#888780;font-weight:600;\">DUE DATE</th><th style=\"padding:9px 8px;text-align:left;font-size:11px;color:#888780;font-weight:600;\">AMOUNT</th><th style=\"padding:9px 8px;text-align:left;font-size:11px;color:#888780;font-weight:600;\">STATUS</th></tr></thead><tbody>${rows}</tbody></table></div>`;\n}).join('');\n\nconst html = `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"></head><body style=\"margin:0;padding:0;background:#f4f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\"><div style=\"max-width:680px;margin:32px auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #d3d1c7;\"><div style=\"background:#1a3a2a;padding:28px 32px;\"><div style=\"font-size:11px;color:#ffffff;opacity:0.8;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;\">${esc(senderName)}</div><h1 style=\"margin:0;color:white;font-size:22px;font-weight:600;\">Morning Overdue Summary</h1><div style=\"color:#ffffff;opacity:0.85;font-size:13px;margin-top:6px;\">11:00 AM - ${runDate} - Deals overdue till yesterday</div></div><div style=\"padding:24px 32px;\"><p style=\"font-size:15px;color:#2c2c2a;margin:0 0 6px;\">Hi <strong>${esc(hodName)}</strong>,</p><p style=\"font-size:14px;color:#5f5e5a;margin:0 0 24px;\">Here is your morning summary. <strong>${totalEmployees} employee(s)</strong> have a total of <strong>${totalDeals} overdue deal(s)</strong> pending from yesterday or earlier.</p>${blocks}</div><div style=\"padding:16px 32px;border-top:1px solid #e8e8e8;\"><p style=\"font-size:12px;color:#888780;margin:0;\">Automated morning report from ${esc(senderName)}. Do not reply.</p></div></div></body></html>`;\n\nreturn [{ json: { ...data, emailHtml: html, emailSubject: `[ Morning Summary Bitrix24 Team ] ${totalDeals} Overdue Deal(s) Across ${totalEmployees} Employee(s) - ${runDate}`, ccEmail: ccEmail } }];\n"
+      },
+      "id": "2b9a0559-fa49-47fb-a8b6-4c33454b3b2d",
+      "name": "Build HOD Summary Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst { hodName, runDate, senderName, hodEmail } = $json;\nconst html = `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"></head><body style=\"margin:0;padding:0;background:#f4f4f0;font-family:sans-serif;\"><div style=\"max-width:600px;margin:32px auto;background:white;border-radius:12px;padding:32px;border:1px solid #d3d1c7;text-align:center;\"><div style=\"font-size:48px;margin-bottom:16px;\">&#10003;</div><h2 style=\"color:#1a3a2a;margin:0 0 12px;\">All Clear!</h2><p style=\"color:#5f5e5a;\">Hi ${hodName}, no overdue deals from yesterday or earlier as of ${runDate}.</p><p style=\"font-size:12px;color:#888780;margin-top:24px;\">Automated morning report from ${senderName}. Do not reply.</p></div></body></html>`;\nreturn [{ json: { hodName, hodEmail, senderName, runDate, emailHtml: html, emailSubject: `[Morning Summary] No Overdue Deals - ${runDate}` } }];\n"
+      },
+      "id": "adc0c9af-1924-4002-b773-832100cc9f22",
+      "name": "Build No Deals Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const payload = $json;\n\nconst tokenRes = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://login.microsoftonline.com/f284e063-bc3b-44ac-b38c-418c4012e4e8/oauth2/v2.0/token',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: 'grant_type=client_credentials&client_id=e5c42145-d918-4fb3-989d-bcc2093e5a42&client_secret=0xm8Q~WQHXtDZBy2Aitz6U.7Hgm9BRkst2MJOdhr&scope=https%3A%2F%2Fgraph.microsoft.com%2F.default',\n});\n\nconst token = typeof tokenRes === 'string' ? JSON.parse(tokenRes) : tokenRes;\n\nreturn {\n  json: {\n    hodName:      payload.hodName,\n    hodEmail:     payload.hodEmail,\n     ccEmail:      payload.ccEmail, \n    senderName:   payload.senderName,\n    runDate:      payload.runDate,\n    emailHtml:    payload.emailHtml,\n    emailSubject: payload.emailSubject,\n    access_token: token.access_token\n  }\n};"
+      },
+      "id": "fb8f4d9a-f5f8-40c6-9dae-60bcac9fe20b",
+      "name": "Fetch Token and Attach",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/users/info@averlonworld.com/sendMail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"subject\": \"{{$json.emailSubject}}\",\n    \"body\": {\n      \"contentType\": \"HTML\",\n      \"content\": \"={{ JSON.stringify($json.emailHtml).slice(1, -1) }}\"\n    },\n    \"toRecipients\": [\n      {\n        \"emailAddress\": {\n          \"address\": \"{{$json.hodEmail}}\"\n        }\n      }\n    ],\n    \"ccRecipients\": [\n      {\n        \"emailAddress\": {\n          \"address\": \"{{$json.ccEmail}}\"\n        }\n      }\n    ]\n  },\n  \"saveToSentItems\": true\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "e7d3294c-bdd9-4dc4-a5b5-5f3d7a5e50ab",
+      "name": "Send HOD Summary Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        560,
+        128
+      ],
+      "retryOnFail": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger 11AM IST": {
+      "main": [
+        [
+          {
+            "node": "Fetch and Group Overdue Deals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch and Group Overdue Deals": {
+      "main": [
+        [
+          {
+            "node": "Has Overdue Deals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Overdue Deals": {
+      "main": [
+        [
+          {
+            "node": "Build HOD Summary Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build No Deals Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build HOD Summary Email": {
+      "main": [
+        [
+          {
+            "node": "Fetch Token and Attach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build No Deals Email": {
+      "main": [
+        [
+          {
+            "node": "Fetch Token and Attach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Token and Attach": {
+      "main": [
+        [
+          {
+            "node": "Send HOD Summary Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "575bfd98-3c2f-4231-8aa6-c6bdb41d00e0",
+  "meta": {
+    "instanceId": "f8721a2f491e95c5e6129a6e36c27a6ad54a391f13843e10874c1c64d7cca928"
+  },
+  "id": "tngGGQQ6ieo0sJRg",
+  "tags": []
+}

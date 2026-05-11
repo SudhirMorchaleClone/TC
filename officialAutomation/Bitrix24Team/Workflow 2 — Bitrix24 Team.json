@@ -1,0 +1,394 @@
+{
+  "name": "Workflow 2 — Bitrix24 Team",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1632,
+        192
+      ],
+      "id": "0d019aec-5e87-4544-9c63-3aae6caefc69",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// BUILD ALERT PAYLOAD — Workflow 2, Node 2\n// ============================================================\n\nconst data = $json;\nconst emp = data.employee || {};\nconst allDeals = data.deals || [];\nconst max = data.maxDealsPerMsg || 8;\nconst dealListUrl = data.dealListUrl || `${data.bitrixDomain}/crm/deal/`;\nconst senderName = data.fromName || 'Averlon CRM';\n\n// Determine current alert time label (IST-aware)\nconst now = new Date();\nconst IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;\nconst nowIST = new Date(now.getTime() + IST_OFFSET_MS);\nconst hour = nowIST.getUTCHours();\n\nlet alertLabel = '10:00 AM';\nif (hour === 13) alertLabel = '1:00 PM';\nelse if (hour === 17) alertLabel = '5:00 PM';\nelse if (hour === 18) alertLabel = '6:30 PM';\n\n// ---- VALIDATE & LIMIT TO MAX 8 ----\nif (!Array.isArray(allDeals) || allDeals.length === 0) {\n  return [{ json: { error: \"Deals data is missing or invalid\", debug: data } }];\n}\n\nconst shownDeals = allDeals.slice(0, max);\nconst remainingCount = allDeals.length - shownDeals.length;\n\n// ---- BUILD DEAL LIST TEXT (for Bitrix24 notification) ----\nfunction dealStatusLabel(deal) {\n  if (deal.status === 'PAST_OVERDUE') return `⚠️ OVERDUE by ${deal.daysOverdue} day(s)`;\n  if (deal.status === 'TODAY') return `🟠 Due TODAY (will be overdue tomorrow)`;\n  return `🔔 Due on ${deal.deadlineFormatted}`;\n}\n\nlet bitrixBody = `📋 *Overdue Deal Alert — ${alertLabel}*\\n\\n`;\nbitrixBody += `Hi ${emp.name || 'User'},\\n\\nYou have ${data.totalDeals} deal(s) requiring your attention:\\n\\n`;\n\nshownDeals.forEach((deal, i) => {\n  const subject = deal.subject || deal.entityTitle || 'Unnamed Deal';\n  const dueDate = deal.deadlineFormatted || 'No date';\n  const url = deal.url || data.bitrixDomain;\n\n  bitrixBody += `${i + 1}. *${subject}*\\n`;\n  bitrixBody += `   📅 Due: ${dueDate}\\n`;\n  bitrixBody += `   ${dealStatusLabel(deal)}\\n`;\n  bitrixBody += `   🔗 [Open Deal](${url})\\n\\n`;\n});\n\nif (remainingCount > 0) {\n  bitrixBody += `➕ And *${remainingCount} more deal(s)* remaining.\\n`;\n  bitrixBody += `[Click here to view all deals](${dealListUrl})\\n\\n`;\n}\n\nbitrixBody += `— ${senderName}`;\n\n// ---- BUILD HTML EMAIL (for Outlook) ----\nfunction dealRowHtml(deal, index) {\n  const statusColor = deal.status === 'PAST_OVERDUE' ? '#E24B4A'\n    : deal.status === 'TODAY' ? '#BA7517' : '#0F6E56';\n  const statusText = deal.status === 'PAST_OVERDUE'\n    ? `Overdue by ${deal.daysOverdue} day(s)`\n    : deal.status === 'TODAY' ? 'Due Today' : `Due on ${deal.deadlineFormatted}`;\n\n  const subject = deal.subject || deal.entityTitle || 'Unnamed Deal';\n  const dueDate = deal.deadlineFormatted || 'No date';\n  const url = deal.url || '#';\n\n  return `\n  <tr style=\"border-bottom: 1px solid #e8e8e8;\">\n    <td style=\"padding: 12px 8px; font-size: 14px; color: #2c2c2a; font-weight: 500;\">${index + 1}. ${subject}</td>\n    <td style=\"padding: 12px 8px; font-size: 13px; color: #5f5e5a;\">${dueDate}</td>\n    <td style=\"padding: 12px 8px;\">\n      <span style=\"background: ${statusColor}22; color: ${statusColor}; font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 12px;\">${statusText}</span>\n    </td>\n    <td style=\"padding: 12px 8px;\">\n      <a href=\"${url}\" style=\"background: #185FA5; color: white; font-size: 12px; padding: 5px 12px; border-radius: 6px; text-decoration: none; display: inline-block;\">View →</a>\n    </td>\n  </tr>`;\n}\n\nconst dealRowsHtml = shownDeals.map((d, i) => dealRowHtml(d, i)).join('');\n\nconst remainingHtml = remainingCount > 0 ? `\n  <div style=\"margin: 16px 0; padding: 12px 16px; background: #E6F1FB; border-radius: 8px; font-size: 14px; color: #185FA5;\">\n    And <strong>${remainingCount} more deal(s)</strong> remaining. \n    <a href=\"${dealListUrl}\" style=\"color: #185FA5; font-weight: 600;\">Click here to view all →</a>\n  </div>` : '';\n\nconst emailHtml = `\n<!DOCTYPE html>\n<html>\n<head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"></head>\n<body style=\"margin: 0; padding: 0; background: #f4f4f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;\">\n  <div style=\"max-width: 620px; margin: 32px auto; background: white; border-radius: 12px; overflow: hidden; border: 1px solid #d3d1c7;\">\n    <div style=\"background: #185FA5; padding: 28px 32px;\">\n      <div style=\"font-size: 11px; color: #B5D4F4; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;\">${senderName}</div>\n      <h1 style=\"margin: 0; color: white; font-size: 22px; font-weight: 600;\">Deal Overdue Alert</h1>\n      <div style=\"color: #B5D4F4; font-size: 13px; margin-top: 6px;\">${alertLabel} · ${data.runDate}</div>\n    </div>\n    <div style=\"padding: 24px 32px 0;\">\n      <p style=\"font-size: 15px; color: #2c2c2a; margin: 0 0 8px;\">Hi <strong>${emp.name || 'User'}</strong>,</p>\n      <p style=\"font-size: 14px; color: #5f5e5a; margin: 0 0 20px;\">You have <strong>${data.totalDeals} deal(s)</strong> that require your immediate attention.</p>\n    </div>\n    <div style=\"padding: 0 32px;\">\n      <table style=\"width: 100%; border-collapse: collapse; font-size: 14px;\">\n        <thead>\n          <tr style=\"background: #f1efe8;\">\n            <th style=\"padding: 10px 8px; text-align: left; font-size: 12px; color: #888780; font-weight: 600;\">Deal Name</th>\n            <th style=\"padding: 10px 8px; text-align: left; font-size: 12px; color: #888780; font-weight: 600;\">Due Date</th>\n            <th style=\"padding: 10px 8px; text-align: left; font-size: 12px; color: #888780; font-weight: 600;\">Status</th>\n            <th style=\"padding: 10px 8px; text-align: left; font-size: 12px; color: #888780; font-weight: 600;\">Action</th>\n          </tr>\n        </thead>\n        <tbody>${dealRowsHtml}</tbody>\n      </table>\n    </div>\n    ${remainingHtml}\n    <div style=\"padding: 24px 32px; border-top: 1px solid #e8e8e8; margin-top: 16px;\">\n      <p style=\"font-size: 12px; color: #888780; margin: 0;\">This is an automated alert from ${senderName}. Please do not reply to this email.</p>\n    </div>\n  </div>\n</body>\n</html>`;\n\n// ---- BUILD CHAT MESSAGE (for Bitrix24 Chat) ----\nlet chatBody = `📋 *Deal Alert — ${alertLabel}*\\n\\n`;\nchatBody += `Hi ${emp.name || 'User'}, you have *${data.totalDeals} deal(s)* needing attention:\\n\\n`;\n\nshownDeals.forEach((deal, i) => {\n  const subject = deal.subject || deal.entityTitle || 'Unnamed Deal';\n  const dueDate = deal.deadlineFormatted || 'No date';\n  const url = deal.url || data.bitrixDomain;\n  chatBody += `${i + 1}. *${subject}*\\n`;\n  chatBody += `   📅 ${dueDate} — ${dealStatusLabel(deal)}\\n`;\n  chatBody += `   🔗 ${url}\\n\\n`;\n});\n\nif (remainingCount > 0) {\n  chatBody += `➕ *${remainingCount} more deal(s)* not shown.\\n`;\n  chatBody += `View all: ${dealListUrl}\\n`;\n}\nchatBody += `\\n— ${senderName}`;\n\nreturn [{\n  json: {\n    ...data,\n    payload: {\n      bitrixTitle: `Deal Alert — ${alertLabel}`,\n      bitrixBody: bitrixBody,\n      chatBody: chatBody,\n      emailSubject: `[${alertLabel}] ${data.totalDeals} Deal(s) Requiring Attention — ${emp.name}`,\n      emailHtml: emailHtml,\n      recipientEmail: emp.email || 'no-email@example.com',\n      recipientName: emp.name || 'User',\n      bitrixUserId: emp.bitrixUserId\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1312,
+        192
+      ],
+      "id": "74698593-1f2b-4b5e-a045-e51551ad673c",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.mainWebhook }}/im.notify.system.add.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "USER_ID",
+              "value": "={{ $json.employee.id }}"
+            },
+            {
+              "name": "MESSAGE",
+              "value": "={{ $json.payload.bitrixBody }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -992,
+        80
+      ],
+      "id": "9f05eda4-751a-4c53-bd97-ebda6ddb7af9",
+      "name": "Send Bitrix24 Notification HTTP Request"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.mainWebhook }}/im.message.add.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "DIALOG_ID",
+              "value": "={{ $json.employee.id }}"
+            },
+            {
+              "name": "MESSAGE",
+              "value": "={{ $json.payload.chatBody }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -976,
+        320
+      ],
+      "id": "5a1d3d32-6342-42ca-8617-48c8a308b745",
+      "name": "Send Bitrix24 Chat Message"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://login.microsoftonline.com/f284e063-bc3b-44ac-b38c-418c4012e4e8/oauth2/v2.0/token",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "client_credentials"
+            },
+            {
+              "name": "client_id",
+              "value": "e5c42145-d918-4fb3-989d-bcc2093e5a42"
+            },
+            {
+              "name": "client_secret",
+              "value": "0xm8Q~WQHXtDZBy2Aitz6U.7Hgm9BRkst2MJOdhr"
+            },
+            {
+              "name": "scope",
+              "value": "https://graph.microsoft.com/.default"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -704,
+        224
+      ],
+      "id": "34d5f3a3-5730-43ee-bedd-791aeb65244d",
+      "name": "Fetch Outlook Token"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.microsoft.com/v1.0/users/info@averlonworld.com/sendMail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"subject\": \"{{ $('Code in JavaScript').item.json.payload.emailSubject }}\",\n    \"body\": {\n      \"contentType\": \"HTML\",\n      \"content\": \"{{ $('Code in JavaScript').item.json.payload.emailHtml.replace(/\"/g, '\\\\\"').replace(/\\n/g, '') }}\"\n    },\n    \"toRecipients\": [\n      {\n        \"emailAddress\": {\n          \"address\": \"{{ $('Code in JavaScript').item.json.payload.recipientEmail }}\",\n          \"name\": \"{{ $('Code in JavaScript').item.json.payload.recipientName }}\"\n        }\n      }\n    ]\n  },\n  \"saveToSentItems\": \"true\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -432,
+        240
+      ],
+      "id": "d3abadc6-ee72-4ac1-8186-900850607537",
+      "name": "HTTP Request — Send Outlook Email",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ae46d47f-bd12-4b47-a175-74a12e5c25d6",
+              "leftValue": "={{$json[\"statusCode\"]}}",
+              "rightValue": "202",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -272,
+        96
+      ],
+      "id": "9797040e-9869-495c-a16a-ed7f87cfa538",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "eea57646-6e54-4965-850e-aebcefb62d79",
+              "name": "status",
+              "value": "Email Sent Successfully",
+              "type": "string"
+            },
+            {
+              "id": "3464a792-2c5f-41ed-a1e2-27c24b06c3a8",
+              "name": "employeeId",
+              "value": "=={{ $('Code in JavaScript').item.json.employee.id }}",
+              "type": "string"
+            },
+            {
+              "id": "4b0de1a1-d4a7-4845-a7d7-3cac51a1610f",
+              "name": "time",
+              "value": "=={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "09481e8b-3be3-4c7f-ab61-f1f42378f4d2",
+      "name": "successfully send"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "dca72013-9a9b-4302-930a-67f5f7ac9deb",
+              "name": "status",
+              "value": "Email Failed",
+              "type": "string"
+            },
+            {
+              "id": "3976c93e-8eb4-4d95-9832-19241e6bb543",
+              "name": "employeeId",
+              "value": "=={{ $('Code in JavaScript').item.json.employee.id }}",
+              "type": "string"
+            },
+            {
+              "id": "34d0c14c-6d82-4303-b9c5-f433f6701f77",
+              "name": "time",
+              "value": "=={{ $now }}",
+              "type": "string"
+            },
+            {
+              "id": "97ba8140-0568-4e10-b81b-246494abed3f",
+              "name": "reason",
+              "value": "Outlook Graph API failed",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        16,
+        224
+      ],
+      "id": "1d3f2560-626f-4aaa-b35e-afe0baa34c0c",
+      "name": "Failed"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Send Bitrix24 Notification HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Bitrix24 Chat Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Bitrix24 Notification HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Fetch Outlook Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Bitrix24 Chat Message": {
+      "main": [
+        [
+          {
+            "node": "Fetch Outlook Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Outlook Token": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request — Send Outlook Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request — Send Outlook Email": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "successfully send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "c3bfff45-6426-4be7-9d0f-8eb99bfe6919",
+  "meta": {
+    "instanceId": "f8721a2f491e95c5e6129a6e36c27a6ad54a391f13843e10874c1c64d7cca928"
+  },
+  "id": "YBD96GlLjlFRZOz1",
+  "tags": []
+}

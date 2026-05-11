@@ -1,0 +1,653 @@
+{
+  "name": "Workflow 1 — Bitrix24TeamBhagwatiSir",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                5,
+                4,
+                6
+              ],
+              "triggerAtHour": 13,
+              "triggerAtMinute": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1792,
+        208
+      ],
+      "id": "5872d31e-384a-4c2c-aa0f-3698e3578e5a",
+      "name": "1 pm Schedule Trigger1"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                5,
+                4,
+                6
+              ],
+              "triggerAtHour": 17,
+              "triggerAtMinute": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1792,
+        384
+      ],
+      "id": "e5dfccc1-7c9d-4871-b7e7-317854014881",
+      "name": "5 pm Schedule Trigger2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7758ebbe-4320-4c6b-9499-458b1070499f",
+              "name": "BITRIX_WEBHOOK",
+              "value": "https://intranet.rajlaxmiworld.com/rest/316/du14lqdt4ijmvzx4",
+              "type": "string"
+            },
+            {
+              "id": "8c070a0d-2fe8-4cde-922c-6e95bcf20792",
+              "name": "BREVO_API_KEY",
+              "value": "xkeysib-XXXXXXXXX",
+              "type": "string"
+            },
+            {
+              "id": "734b8d67-57b0-45df-b2f5-5613cd848f9d",
+              "name": "BITRIX_DOMAIN",
+              "value": "https://intranet.rajlaxmiworld.com",
+              "type": "string"
+            },
+            {
+              "id": "af950c72-2758-40f1-a255-ed0bf8ef6a7d",
+              "name": "HOD_USER_ID",
+              "value": "316",
+              "type": "string"
+            },
+            {
+              "id": "6a1af5ae-9b03-4008-ad47-199f960426d8",
+              "name": "HOD_EMAIL",
+              "value": "Dr. Aarti Arya",
+              "type": "string"
+            },
+            {
+              "id": "8c49c31e-6f1c-4e5b-9c2a-ca73b765bf09",
+              "name": "HOD_NAME",
+              "value": "Dr. Aarti Arya",
+              "type": "string"
+            },
+            {
+              "id": "277159d4-2aaf-47ae-bed6-74383e35562d",
+              "name": "TARGET_DEPARTMENT ",
+              "value": "Bitrix24 Team",
+              "type": "string"
+            },
+            {
+              "id": "fa8f3a2b-5070-4df1-b81c-4e34ca8d68f2",
+              "name": "BITRIX_DEAL_LIST_URL",
+              "value": "https://intranet.rajlaxmiworld.com/crm/deal/list/",
+              "type": "string"
+            },
+            {
+              "id": "f343a887-eb1c-4691-bacd-fcb8db0fde59",
+              "name": "MAX_DEALS_PER_MSG",
+              "value": "8",
+              "type": "string"
+            },
+            {
+              "id": "f9af8353-27c5-41ab-af11-5e911f8cd158",
+              "name": "SENDER_NAME",
+              "value": "Averloan Solutions",
+              "type": "string"
+            },
+            {
+              "id": "b2b83c1f-c567-4e70-a404-825dc3b2f0e1",
+              "name": "SELECTED_EMPLOYEES",
+              "value": "[]",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1568,
+        256
+      ],
+      "id": "0de4cd42-0ab9-4a63-acfb-0478988d12b1",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "url": "={{$json[\"BITRIX_WEBHOOK\"]}}/crm.deal.list.json?filter[CLOSED]=N&select[]=ID&select[]=TITLE&select[]=CLOSEDATE&select[]=BEGINDATE&select[]=DATE_MODIFY&select[]=ASSIGNED_BY_ID&select[]=STAGE_ID",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "{\n  \"filter\": {\n    \"CLOSED\": \"N\"\n  },\n  \"select\": [\"ID\", \"TITLE\", \"CLOSEDATE\", \"BEGINDATE\", \"DATE_MODIFY\", \"ASSIGNED_BY_ID\", \"STAGE_ID\"],\n  \"order\": { \"CLOSEDATE\": \"ASC\" },\n  \"start\": 0\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1248,
+        80
+      ],
+      "id": "1aad6db1-03d7-47fa-8bbf-a420e3d44c04",
+      "name": "Deals HTTP Request",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "={{$json[\"BITRIX_WEBHOOK\"]}}/user.get.json?filter[ACTIVE]=true",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "={\n  \"filter\": { \"ACTIVE\": true },\n  \"select\": [\"ID\", \"NAME\", \"LAST_NAME\", \"EMAIL\", \"UF_DEPARTMENT\"]\n}",
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1248,
+        256
+      ],
+      "id": "cc61dab0-d958-4400-a452-73f63e47224c",
+      "name": "Fetch Users HTTP Request",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -864,
+        112
+      ],
+      "id": "18c36756-0a21-4da6-a575-4f96d9a4018a",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// ============================================================\n// FILTER ENGINE — Dual Webhook Version\n// Webhook 316  → users, departments, notifications\n// Webhook 71603 → activities, deals\n// Window: past 30 days (overdue) + today + next 30 days (upcoming)\n// ============================================================\n\nconst MAIN_WEBHOOK     = 'https://intranet.rajlaxmiworld.com/rest/1/65xnwve29k4aybeh';\nconst ACTIVITY_WEBHOOK = 'https://intranet.rajlaxmiworld.com/rest/71603/jqz6l15bjdnyx803';\nconst BITRIX_DOMAIN    = 'https://intranet.rajlaxmiworld.com';\nconst BREVO_API_KEY    = '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';\nconst FROM_EMAIL       = 'info@averlonworld.com';\nconst FROM_NAME        = 'Averlon CRM';\nconst HOD_USER_ID      = '316';\nconst HOD_NAME         = 'Bhagwati Dhandharia';\nconst HOD_EMAIL        = 'bhagwati@rajlaxmiworld.com';\nconst TARGET_DEPARTMENT = 'Bitrix24 Team';\nconst MAX_DEALS_PER_MSG = 8;\n\n// [] = ALL employees in department\n// [{id:'34574', name:'Mansi Jaiswal', email:'mansi@rajlaxmiworld.com'}] = specific only\nconst SELECTED_EMPLOYEES = [];\n\n// ── IST time setup ────────────────────────────────────────\nconst nowIST = new Date(\n  new Date().toLocaleString(\"en-US\", { timeZone: \"Asia/Kolkata\" })\n);\nconst todayStr = nowIST.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });\n//const todayStr  = nowIST.toISOString().slice(0, 10);\nconst istHour   = nowIST.getHours();\nconst istMinute = nowIST.getMinutes();\n\n// ── Trigger slot detection ────────────────────────────────\n//const isReminder1  = (istHour === 10 && istMinute < 0);\n//const isReminder2  = (istHour === 14 && istMinute < 0);\n//const isReminder3  = (istHour === 17 && istMinute < 0);\n\nconst isReminder1  = (istHour === 10 && istMinute >= 0 && istMinute < 40);\nconst isReminder2  = (istHour === 13 && istMinute >= 0 && istMinute < 55);\nconst isReminder3  = (istHour === 17 && istMinute >= 0 && istMinute < 50);\n\nconst isEscalation = (istHour === 18 && istMinute >= 0 && istMinute < 40);\n\n//const isEscalation = (istHour === 12 && istMinute >= 30 && istMinute < 50);\n\n//const isEscalation = true ;\n\nconst isAnySlot   = isReminder1 || isReminder2 || isReminder3 || isEscalation;\n\nconst isReminder = isReminder1 || isReminder2 || isReminder3;\n\n// final routing flag\nconst route =\n  isEscalation ? 'ESCALATION' :\n  isReminder   ? 'REMINDER'   :\n  'NONE';\n\n\nconst triggerSlot = isReminder1 ? '10:30am' : isReminder2 ? '1pm' : isReminder3 ? '5pm' : isEscalation ? '6:30pm' : 'unknown';\n\nconsole.log(`\\n${'═'.repeat(60)}`);\nconsole.log(`🚀 DUAL WEBHOOK ENGINE | IST: ${istHour}:${String(istMinute).padStart(2,'0')} | Slot: ${triggerSlot}`);\nconsole.log('═'.repeat(60));\n\nif (!isAnySlot) {\n  console.log(`⏱ Not a scheduled slot — skipping.`);\n  return [{ json: { hasDeals: false, message: `Not a scheduled slot (${istHour}:${String(istMinute).padStart(2,'0')} IST)`, runDate: todayStr } }];\n}\n\n// ── Date window ───────────────────────────────────────────\nfunction parseDateStr(str) {\n  const [y, m, d] = str.split('-').map(Number);\n  return new Date(y, m - 1, d);\n}\nfunction parseBitrixDate(dateStr) {\n  if (!dateStr) return null;\n  const part = new Date(dateStr).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });\n  return parseDateStr(part);\n}\nfunction formatDate(dateStr) {\n  const d = parseBitrixDate(dateStr);\n  if (!d) return '—';\n  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });\n}\n\nconst today       = parseDateStr(todayStr);\nconst windowStart = new Date(today); windowStart.setDate(windowStart.getDate() - 30);\nconst windowEnd   = new Date(today); windowEnd.setDate(windowEnd.getDate() + 30);\n\nfunction classifyDate(dateStr) {\n  const d = parseBitrixDate(dateStr);\n  if (!d) return 'IGNORE';\n  if (d < windowStart) return 'IGNORE';\n  if (d > windowEnd)   return 'IGNORE';\n  if (d < today)       return 'PAST_OVERDUE';\n  if (d.getTime() === today.getTime()) return 'TODAY';\n  return 'UPCOMING';\n}\nfunction daysOverdue(dateStr) {\n  const d = parseBitrixDate(dateStr);\n  if (!d) return 0;\n  return Math.floor((today - d) / 86400000);\n}\nfunction daysUntil(dateStr) {\n  const d = parseBitrixDate(dateStr);\n  if (!d) return 0;\n  return Math.floor((d - today) / 86400000);\n}\nfunction dealUrl(id)  { return `${BITRIX_DOMAIN}/crm/deal/details/${id}/`; }\nfunction leadUrl(id)  { return `${BITRIX_DOMAIN}/crm/lead/details/${id}/`; }\nfunction entityUrl(ownerTypeId, ownerId) {\n  return ownerTypeId === '1' ? leadUrl(ownerId) : ownerTypeId === '2' ? dealUrl(ownerId) : `${BITRIX_DOMAIN}/crm/`;\n}\n\nconst ACTIVITY_TYPE  = { '1':'Call','2':'Meeting','3':'Task','4':'Email','6':'Follow-up' };\nconst OWNER_TYPE_LBL = { '1':'Lead','2':'Deal' };\n\n// ────────────────────────────────────────────────────────────\n// STEP 1 — Fetch departments\n// ────────────────────────────────────────────────────────────\nconsole.log(`\\n📡 STEP 1 — Fetching departments`);\nlet deptRes;\ntry {\n  deptRes = await this.helpers.request({ method: 'GET', url: `${MAIN_WEBHOOK}/department.get.json`, json: true });\n} catch(e) { throw new Error(`[MAIN] Dept fetch failed: ${e.message}`); }\n\nconst deptMap = {};\nfor (const d of (deptRes.result || [])) deptMap[String(d.ID)] = d.NAME || `Dept #${d.ID}`;\n\nconst targetDeptIds = Object.entries(deptMap)\n  .filter(([, name]) => name.toLowerCase().includes(TARGET_DEPARTMENT.toLowerCase()))\n  .map(([id]) => id);\n\nconsole.log(`   ✅ ${Object.keys(deptMap).length} total depts found`);\nconsole.log(`   🎯 Target dept IDs: [${targetDeptIds.join(', ')}] for \"${TARGET_DEPARTMENT}\"`);\n\nif (targetDeptIds.length === 0) {\n  throw new Error(`Department \"${TARGET_DEPARTMENT}\" not found. Available: ${Object.values(deptMap).join(', ')}`);\n}\n\n// ────────────────────────────────────────────────────────────\n// STEP 2 — Build userMap based on mode\n// ────────────────────────────────────────────────────────────\nconst targetSpecific = SELECTED_EMPLOYEES.length > 0;\nconst selectedIds    = SELECTED_EMPLOYEES.map(e => String(e.id));\nconst userMap        = {};\n\nif (targetSpecific) {\n  // ── MODE A: Specific employees only ──────────────────────\n  console.log(`\\n👤 STEP 2 — MODE A: Loading ${SELECTED_EMPLOYEES.length} specific employee(s)`);\n\n  for (const emp of SELECTED_EMPLOYEES) {\n    userMap[String(emp.id)] = {\n      id:    String(emp.id),\n      name:  emp.name,\n      email: emp.email\n    };\n    console.log(`   ✅ Added: ${emp.name} (${emp.id})`);\n  }\n\n} else {\n  // ── MODE B: ALL active users — fetch everyone, filter client-side ──\n  console.log(`\\n👥 STEP 2 — MODE B: Fetching ALL active users (will filter by dept client-side)`);\n\n  let allUsers = [], uStart = 0, uMore = true;\n\n  while (uMore) {\n    try {\n      const res = await this.helpers.request({\n        method: 'GET',\n        url: `${MAIN_WEBHOOK}/user.get.json?filter[ACTIVE]=true&start=${uStart}`,\n        json: true\n      });\n      const batch = res.result || [];\n      allUsers = allUsers.concat(batch);\n      console.log(`   📦 Fetched batch: ${batch.length} users (total so far: ${allUsers.length})`);\n      uMore = !!(res.next && batch.length > 0);\n      if (uMore) uStart = res.next;\n    } catch(e) { throw new Error(`[MAIN] User fetch failed: ${e.message}`); }\n  }\n\n  console.log(`   ✅ ${allUsers.length} total active users fetched`);\n\n  // Filter client-side: keep only users whose dept list overlaps with targetDeptIds\n  for (const u of allUsers) {\n    const uid = String(u.ID);\n\n    // UF_DEPARTMENT can be an array (multiple depts) or a single value\n    const userDeptIds = Array.isArray(u.UF_DEPARTMENT)\n      ? u.UF_DEPARTMENT.map(String)\n      : (u.UF_DEPARTMENT ? [String(u.UF_DEPARTMENT)] : []);\n\n    const inTargetDept = userDeptIds.some(d => targetDeptIds.includes(d));\n    if (!inTargetDept) continue;\n\n    let email = '';\n    if (Array.isArray(u.EMAIL))           email = u.EMAIL[0]?.VALUE || '';\n    else if (typeof u.EMAIL === 'string') email = u.EMAIL;\n\n    userMap[uid] = {\n      id:    uid,\n      name:  `${u.NAME || ''} ${u.LAST_NAME || ''}`.trim() || 'Unknown',\n      email: email.trim()\n    };\n  }\n\n  console.log(`   🎯 ${Object.keys(userMap).length} users belong to \"${TARGET_DEPARTMENT}\"`);\n  for (const u of Object.values(userMap)) {\n    console.log(`      • ${u.name} (${u.id}) — ${u.email || 'no email'}`);\n  }\n}\n\nif (Object.keys(userMap).length === 0) {\n  return [{ json: { hasDeals: false, message: `No users found in \"${TARGET_DEPARTMENT}\"`, triggerSlot, runDate: todayStr } }];\n}\n\n// ────────────────────────────────────────────────────────────\n// STEP 3 — Fetch ALL open deals\n// ────────────────────────────────────────────────────────────\nconsole.log(`\\n📡 STEP 3 — Fetching open deals`);\nlet allDeals = [], dStart = 0, dMore = true;\nwhile (dMore) {\n  try {\n    const res = await this.helpers.request({\n      method: 'GET',\n      url: `${ACTIVITY_WEBHOOK}/crm.deal.list.json?filter[CLOSED]=N` +\n           `&select[]=ID&select[]=TITLE&select[]=CLOSEDATE&select[]=BEGINDATE` +\n           `&select[]=DATE_MODIFY&select[]=ASSIGNED_BY_ID&select[]=STAGE_ID` +\n           `&start=${dStart}`,\n      json: true\n    });\n    allDeals = allDeals.concat(res.result || []);\n    dMore = !!(res.next && (res.result || []).length > 0);\n    if (dMore) dStart = res.next;\n  } catch(e) { throw new Error(`[ACTIVITY] Deal fetch failed: ${e.message}`); }\n}\nconsole.log(`   ✅ ${allDeals.length} open deals`);\n\nconst dealMap = {};\nfor (const d of allDeals) dealMap[String(d.ID)] = d;\n\n// ────────────────────────────────────────────────────────────\n// STEP 4 — Fetch incomplete activities for these users\n// ────────────────────────────────────────────────────────────\nconsole.log(`\\n📡 STEP 4 — Fetching activities for ${Object.keys(userMap).length} user(s)`);\nlet allActivities = [];\nconst userIds        = Object.keys(userMap);\nconst windowStartStr = windowStart.toISOString().slice(0, 10);\nconst windowEndStr   = windowEnd.toISOString().slice(0, 10);\n\nfor (const uid of userIds) {\n  let aStart = 0;\n  let aMore = true;\n\n  console.log(`   🔍 Fetching activities for user ${uid}`);\n\n  while (aMore) {\n    try {\n      const res = await this.helpers.request({\n        method: 'GET',\n        url: `${ACTIVITY_WEBHOOK}/crm.activity.list.json` +\n             `?filter[RESPONSIBLE_ID]=${uid}` +\n             `&filter[COMPLETED]=N` +\n             `&filter[>=DEADLINE]=${windowStartStr}` +\n             `&filter[<=DEADLINE]=${windowEndStr}` +\n             `&select[]=ID&select[]=SUBJECT&select[]=DEADLINE&select[]=COMPLETED` +\n             `&select[]=RESPONSIBLE_ID&select[]=TYPE_ID` +\n             `&select[]=OWNER_ID&select[]=OWNER_TYPE_ID` +\n             `&start=${aStart}`,\n        json: true\n      });\n\n      const batch = res.result || [];\n      allActivities = allActivities.concat(batch);\n\n      aMore = !!(res.next && batch.length > 0);\n      if (aMore) aStart = res.next;\n\n    } catch(e) {\n      throw new Error(`[ACTIVITY] Activity fetch failed for user ${uid}: ${e.message}`);\n    }\n  }\n}\nconsole.log(`   ✅ ${allActivities.length} incomplete activities found`);\n\n// ────────────────────────────────────────────────────────────\n// STEP 5 — Group & classify activities per user\n// ────────────────────────────────────────────────────────────\nconst grouped = {};\nlet skippedDept = 0, skippedDate = 0, skippedCompleted = 0;\n\nfor (const act of allActivities) {\n  const responsibleId = String(act.RESPONSIBLE_ID);\n\n  if (!userMap[responsibleId]) { skippedDept++; continue; }\n  if (act.COMPLETED === 'Y')   { skippedCompleted++; continue; }\n\n  const status = classifyDate(act.DEADLINE);\n  if (status === 'IGNORE') { skippedDate++; continue; }\n\n  const ownerTypeId = String(act.OWNER_TYPE_ID || '');\n  const ownerId     = String(act.OWNER_ID || '');\n  const user        = userMap[responsibleId];\n\n  let entityTitle = act.SUBJECT || 'No Subject';\n  const linkedId  = ownerId || null;\n\n  if (ownerTypeId === '2' && dealMap[ownerId]) {\n    entityTitle = dealMap[ownerId].TITLE || `Deal #${ownerId}`;\n  } else if (ownerTypeId === '1') {\n    entityTitle = `Lead #${ownerId}`;\n  }\n\n  if (!grouped[responsibleId]) {\n    grouped[responsibleId] = {\n      employee: { id: responsibleId, name: user.name, email: user.email },\n      overdue:  [],\n      today:    [],\n      upcoming: [],\n      all:      []\n    };\n  }\n\n  const item = {\n    id:                String(act.ID),\n    subject:           act.SUBJECT || 'No Subject',\n    activityType:      ACTIVITY_TYPE[String(act.TYPE_ID)] || 'Activity',\n    entityType:        OWNER_TYPE_LBL[ownerTypeId] || 'CRM',\n    entityTitle,\n    ownerTypeId,\n    ownerId:           linkedId,\n    deadline:          act.DEADLINE,\n    deadlineFormatted: formatDate(act.DEADLINE),\n    status,\n    daysOverdue:       status === 'PAST_OVERDUE' ? daysOverdue(act.DEADLINE) : 0,\n    daysUntil:         status === 'UPCOMING'     ? daysUntil(act.DEADLINE)   : 0,\n    url:               entityUrl(ownerTypeId, linkedId)\n  };\n\n  grouped[responsibleId].all.push(item);\n  if (status === 'PAST_OVERDUE') grouped[responsibleId].overdue.push(item);\n  if (status === 'TODAY')        grouped[responsibleId].today.push(item);\n  if (status === 'UPCOMING')     grouped[responsibleId].upcoming.push(item);\n}\n\nconsole.log(`\\n📊 FINAL SUMMARY`);\nconsole.log(`   ⬜ Skipped (not in scope) : ${skippedDept}`);\nconsole.log(`   ⬜ Skipped (completed)    : ${skippedCompleted}`);\nconsole.log(`   ⬜ Skipped (date window)  : ${skippedDate}`);\nconsole.log(`   ✅ Users with activities  : ${Object.keys(grouped).length}`);\nfor (const [, data] of Object.entries(grouped)) {\n  console.log(`      ${data.employee.name}: 🔴${data.overdue.length} overdue | 🟡${data.today.length} today | 🔵${data.upcoming.length} upcoming`);\n}\n\n// ────────────────────────────────────────────────────────────\n// STEP 6 — Build output\n// ────────────────────────────────────────────────────────────\nconst statusOrder = { 'PAST_OVERDUE': 0, 'TODAY': 1, 'UPCOMING': 2 };\nconst output = Object.values(grouped).map(empData => {\n  empData.all.sort((a, b) => {\n    const so = statusOrder[a.status] - statusOrder[b.status];\n    return so !== 0 ? so : parseBitrixDate(a.deadline) - parseBitrixDate(b.deadline);\n  });\n\n  return {\n    json: {\n      employee:        empData.employee,\n      deals:           empData.all,\n      overdueItems:    empData.overdue,\n      todayItems:      empData.today,\n      upcomingItems:   empData.upcoming,\n      overdueCount:    empData.overdue.length,\n      todayCount:      empData.today.length,\n      upcomingCount:   empData.upcoming.length,\n      totalDeals:      empData.all.length,\n      hasDeals:        empData.all.length > 0,\n      triggerSlot,\n\n       isReminder,\n    isEscalation,\n    route,\n      \n      mainWebhook:     MAIN_WEBHOOK,\n      activityWebhook: ACTIVITY_WEBHOOK,\n      brevoApiKey:     BREVO_API_KEY,\n      fromEmail:       FROM_EMAIL,\n      fromName:        FROM_NAME,\n      hodUserId:       HOD_USER_ID,\n      hodName:         HOD_NAME,\n      hodEmail:        HOD_EMAIL,\n      bitrixDomain:    BITRIX_DOMAIN,\n      maxDealsPerMsg:  MAX_DEALS_PER_MSG,\n      runDate:         todayStr\n    }\n  };\n});\n\nif (output.length === 0) {\n  return [{\n    json: {\n      hasDeals:   false,\n      message:    `No activities in window (±30 days) for \"${TARGET_DEPARTMENT}\"`,\n\n       isReminder,\n    isEscalation,\n    route,\n\n      \n      triggerSlot,\n      runDate:    todayStr\n    }\n  }];\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -592,
+        320
+      ],
+      "id": "6bdefc39-0139-41df-a642-d5fc9d031f48",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "={{$node[\"Edit Fields\"].json[\"BITRIX_WEBHOOK\"]}}/crm.activity.list.json?filter[COMPLETED]=N&select[]=ID&select[]=SUBJECT&select[]=DEADLINE&select[]=COMPLETED&select[]=RESPONSIBLE_ID&select[]=BINDINGS&select[]=TYPE_ID",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "{\n  \"filter\": {\n    \"COMPLETED\": \"N\"\n  },\n  \"select\": [\n    \"ID\",\n    \"SUBJECT\",\n    \"DEADLINE\",\n    \"COMPLETED\",\n    \"RESPONSIBLE_ID\",\n    \"BINDINGS\",\n    \"TYPE_ID\"\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1248,
+        464
+      ],
+      "id": "52a61c10-6407-4f6f-b041-40e94d8e3299",
+      "name": "Fetch Activities HTTP Request",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -880,
+        448
+      ],
+      "id": "9478a954-7da1-4c3b-b98c-c0880f9dc5ae",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1728,
+        752
+      ],
+      "id": "882b514a-12b0-45dc-b42d-c2069fd3941c",
+      "name": "data share to 3rd workflow"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "YBD96GlLjlFRZOz1",
+          "mode": "id",
+          "cachedResultUrl": "/workflow/YBD96GlLjlFRZOz1"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        368
+      ],
+      "id": "8c8b6c66-b918-4939-9f7d-f3e1003455cf",
+      "name": "Call 'Workflow 2 — Alert Dispatcher (10AM · 1PM · 5PM) copy 2'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "xGo56TFHPSYgadUt",
+          "mode": "id",
+          "cachedResultUrl": "/workflow/xGo56TFHPSYgadUt"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "5d26d98c-854b-4f6f-b6a2-c333125683d8",
+      "name": "Call 'Workflow 3 — Escalation Engine (6:30 PM) copy 2'"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3fde0b8f-dc6c-4bbd-b995-49aee69114d4",
+              "leftValue": "={{$json.route}}",
+              "rightValue": "ESCALATION",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -416,
+        48
+      ],
+      "id": "e72fe049-cc6f-46a1-8784-0b008207fcdd",
+      "name": "3rdWorkflow"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "417145d3-d921-460f-8a8c-c988bdb671d8",
+              "leftValue": "={{ $json.hasDeals }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -368,
+        480
+      ],
+      "id": "4e16087f-ef78-4d07-baa6-d7183bca71b4",
+      "name": "2ndWorkflow"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                5,
+                4,
+                6
+              ],
+              "triggerAtHour": 10,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1776,
+        32
+      ],
+      "id": "767f6ad0-ccbb-4fb3-b581-79239e9b7e25",
+      "name": "10:30am Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                5,
+                4,
+                6
+              ],
+              "triggerAtHour": 18,
+              "triggerAtMinute": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1792,
+        560
+      ],
+      "id": "b27c4808-6ce9-49df-b83d-38c1a931d77d",
+      "name": "6  pm Schedule Trigger3"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "1 pm Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5 pm Schedule Trigger2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Deals HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Users HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Activities HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deals HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Users HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "2ndWorkflow",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "3rdWorkflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Activities HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "data share to 3rd workflow": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3rdWorkflow": {
+      "main": [
+        [
+          {
+            "node": "Call 'Workflow 3 — Escalation Engine (6:30 PM) copy 2'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2ndWorkflow": {
+      "main": [
+        [
+          {
+            "node": "Call 'Workflow 2 — Alert Dispatcher (10AM · 1PM · 5PM) copy 2'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10:30am Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6  pm Schedule Trigger3": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "fc0f16c5-37b5-4e0d-8e72-029849c0099a",
+  "meta": {
+    "instanceId": "f8721a2f491e95c5e6129a6e36c27a6ad54a391f13843e10874c1c64d7cca928"
+  },
+  "id": "uDyaipZYHM4MMa5p",
+  "tags": []
+}

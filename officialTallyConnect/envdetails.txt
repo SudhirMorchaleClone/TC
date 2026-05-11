@@ -1,0 +1,27 @@
+DATABASE_URL=postgresql://postgres:root@localhost:5432/Tally11
+DB_USER=postgres
+DB_PASS=root
+DB_HOST=localhost
+DB_NAME=Tally12
+DB_PORT=5432
+PORT=4000
+JWT_SECRET=my_super_secret_key_123
+BREVO_API_KEY=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
+BREVO_SENDER_EMAIL=sush224488@gmail.com
+BREVO_SENDER_NAME= RajlaxmiSolutions
+LICENSE_INTERNAL_KEY=my-secret-key-123
+CLOUDINARY_CLOUD_NAME=dzk7dzy2l
+CLOUDINARY_API_KEY=667613811852597
+CLOUDINARY_API_SECRET=RRk8UwzuyjnBtmtpUcxORFwx1dA
+
+
+
+MICROSOFT_TENANT_ID=f284e063-bc3b-44ac-b38c-418c4012e4e8
+MICROSOFT_CLIENT_ID=e5c42145-d918-4fb3-989d-bcc2093e5a42
+MICROSOFT_CLIENT_SECRET=0xm8Q~WQHXtDZBy2Aitz6U.7Hgm9BRkst2MJOdhr
+MICROSOFT_SENDER_EMAIL=info@averlonworld.com
+
+
+==============================================================================================
+
+VITE_API_BASE_URL=http://localhost:4000

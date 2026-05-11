@@ -1,0 +1,249 @@
+{
+  "name": "C4ActivtySummary",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 11 * * 1-6"
+            }
+          ]
+        }
+      },
+      "id": "81f654a6-ddf2-41ce-9ed5-23798b01f93b",
+      "name": "Schedule Trigger 11AM IST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -816,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAIN_WEBHOOK     = 'https://intranet.rajlaxmiworld.com/rest/316/du14lqdt4ijmvzx4';\nconst ACTIVITY_WEBHOOK = 'https://intranet.rajlaxmiworld.com/rest/71603/jqz6l15bjdnyx803';\nconst BITRIX_DOMAIN    = 'https://intranet.rajlaxmiworld.com';\nconst SENDER_NAME      = 'Averlon System';\n\n// ── Optional filters ─────────────────────────────────────────────────────────\nconst FILTER_PIPELINE_IDS = [];  // CRM Deal Category/Pipeline IDs — empty = all pipelines\nconst FILTER_USER_IDS     = [];  // Specific user IDs — empty = all users\nconst FILTER_HOD_IDS      = [];  // HOD user IDs to target — empty = all HODs\n// ── CC recipients (always included on every email) ───────────────────────────\nconst CC_EMAILS           = ['dr.aarti@rajlaxmiworld.com'];\n// ────────────────────────────────────────────────────────────────────────────\n\nconst IST_OFFSET_MS  = 5.5 * 60 * 60 * 1000;\nconst nowIST         = new Date(Date.now() + IST_OFFSET_MS);\nconst todayStr       = nowIST.toISOString().slice(0, 10);\n\nfunction parseDateStr(str) {\n  const [y, m, d] = str.split('-').map(Number);\n  return new Date(y, m - 1, d);\n}\nfunction parseBitrixDate(dateStr) {\n  if (!dateStr) return null;\n  const part = new Date(dateStr).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });\n  return parseDateStr(part);\n}\nfunction formatDate(dateStr) {\n  const d = parseBitrixDate(dateStr);\n  if (!d) return '\\u2014';\n  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });\n}\n\nconst today          = parseDateStr(todayStr);\nconst todayTime      = today.getTime();\nconst windowStart    = new Date(today);\nwindowStart.setDate(windowStart.getDate() - 30);\nconst windowStartStr = windowStart.toISOString().slice(0, 10);\nconst yesterdayStr   = new Date(todayTime - 86400000).toISOString().slice(0, 10);\n\nconst CONCURRENCY = 10;\n\nasync function fetchAllPages(baseUrl) {\n  const results = [];\n  let start = 0, hasMore = true;\n  const sep = baseUrl.includes('?') ? '&' : '?';\n  while (hasMore) {\n    const res = await this.helpers.request({\n      method: 'GET',\n      url: `${baseUrl}${sep}start=${start}`,\n      json: true\n    });\n    const batch = res.result || [];\n    results.push(...batch);\n    hasMore = !!(res.next && batch.length > 0);\n    if (hasMore) start = res.next;\n  }\n  return results;\n}\nconst fetchAllPagesBound = fetchAllPages.bind(this);\n\n// ── Build deal fetch URL — filter by pipeline if specified ───────────────────\nfunction buildDealUrl() {\n  let url = `${ACTIVITY_WEBHOOK}/crm.deal.list.json?filter[CLOSED]=N` +\n            `&select[]=ID&select[]=TITLE&select[]=OPPORTUNITY&select[]=CURRENCY_ID&select[]=CATEGORY_ID`;\n  if (FILTER_PIPELINE_IDS.length > 0) {\n    FILTER_PIPELINE_IDS.forEach((id, i) => {\n      url += `&filter[CATEGORY_ID][${i}]=${id}`;\n    });\n  }\n  return url;\n}\n\n// ── Parallel bootstrap fetches ───────────────────────────────────────────────\nconst [deptRes, allUsers, allDeals] = await Promise.all([\n  this.helpers.request({ method: 'GET', url: `${MAIN_WEBHOOK}/department.get.json`, json: true }),\n  fetchAllPagesBound(`${MAIN_WEBHOOK}/user.get.json?filter[ACTIVE]=true`),\n  fetchAllPagesBound(buildDealUrl())\n]);\n\n// ── Department map ───────────────────────────────────────────────────────────\nconst deptMap = new Map();\nfor (const d of (deptRes.result || [])) {\n  deptMap.set(String(d.ID), { name: d.NAME || '', head: d.UF_HEAD ? String(d.UF_HEAD) : null });\n}\n\n// ── Deal map — only deals belonging to the filtered pipelines ────────────────\nconst allowedPipelineSet = new Set(FILTER_PIPELINE_IDS.map(String));\nconst dealMap = new Map();\nfor (const d of allDeals) {\n  const catId = String(d.CATEGORY_ID ?? '0');\n  if (allowedPipelineSet.size > 0 && !allowedPipelineSet.has(catId)) continue;\n  dealMap.set(String(d.ID), d);\n}\n\n// ── User lookup map ──────────────────────────────────────────────────────────\nconst userIdToRaw = new Map();\nfor (const u of allUsers) userIdToRaw.set(String(u.ID), u);\n\nfunction getEmail(u) {\n  if (!u) return '';\n  return (Array.isArray(u.EMAIL) ? (u.EMAIL[0]?.VALUE || '') : (u.EMAIL || '')).trim();\n}\n\n// ── HOD filter set — if populated, only these HODs will receive emails ────────\nconst filterHodSet = new Set(FILTER_HOD_IDS.map(String));\n\n// ── Build userMap with optional user filter ──────────────────────────────────\nconst filterUserSet = new Set(FILTER_USER_IDS.map(String));\n\nconst userMap = new Map();\nfor (const u of allUsers) {\n  const uid = String(u.ID);\n  if (filterUserSet.size > 0 && !filterUserSet.has(uid)) continue;\n\n  const userDeptIds = Array.isArray(u.UF_DEPARTMENT)\n    ? u.UF_DEPARTMENT.map(String).filter(Boolean)\n    : (u.UF_DEPARTMENT ? [String(u.UF_DEPARTMENT)] : []);\n\n  let hodId   = null;\n  let hodUser = null;\n  for (const deptId of userDeptIds) {\n    const dept = deptMap.get(deptId);\n    if (dept?.head) {\n      const candidate = userIdToRaw.get(dept.head);\n      if (candidate) { hodId = dept.head; hodUser = candidate; break; }\n    }\n  }\n\n  // ── If HOD filter is active, skip employees whose HOD is not in the filter ──\n  if (filterHodSet.size > 0 && (!hodId || !filterHodSet.has(String(hodId)))) continue;\n\n  userMap.set(uid, {\n    id:       uid,\n    name:     `${u.NAME || ''} ${u.LAST_NAME || ''}`.trim(),\n    email:    getEmail(u),\n    hodId,\n    hodEmail: getEmail(hodUser),\n    hodName:  hodUser ? `${hodUser.NAME} ${hodUser.LAST_NAME}`.trim() : ''\n  });\n}\n\n// ── Fetch activities per user, keep only those linked to filtered pipeline deals ──\nconst grouped = new Map();\n\nasync function fetchActivitiesForUser(uid) {\n  const user = userMap.get(uid);\n // if (!user.hodId || !user.hodEmail) return;\n\n  if (!user.hodId || !user.hodEmail) {\n  console.log(`Skipping user ${user.name} — missing HOD email`);\n  return;\n}\n  \n\n  // ── Skip this user's HOD if not in the HOD filter (double-guard) ─────────\n  if (filterHodSet.size > 0 && !filterHodSet.has(String(user.hodId))) return;\n\n  const hodKey = user.hodId;\n\n  const baseUrl =\n    `${ACTIVITY_WEBHOOK}/crm.activity.list.json` +\n    `?filter[RESPONSIBLE_ID]=${uid}` +\n    `&filter[COMPLETED]=N` +\n    `&filter[>=DEADLINE]=${windowStartStr}` +\n    `&filter[<=DEADLINE]=${yesterdayStr}` +\n    `&select[]=ID&select[]=SUBJECT&select[]=DEADLINE&select[]=RESPONSIBLE_ID` +\n    `&select[]=TYPE_ID&select[]=OWNER_ID&select[]=OWNER_TYPE_ID`;\n\n  const activities = await fetchAllPagesBound(baseUrl);\n\n  const dealMapUnique = new Map();\n\n  for (const act of activities) {\n\n     const subject = (act.SUBJECT || '').toLowerCase();\n\n  // ❌ Skip \"Reason For Loss\"\n  if (subject.includes('reason for loss')) continue;\n    \n    \n   const d = parseBitrixDate(act.DEADLINE);\nif (!d) continue;\n\n// ❌ skip future + today\nif (d.getTime() >= todayTime) continue;\n\n// ❌ skip older than 30 days\nif (d.getTime() < windowStart.getTime()) continue;\n    \n\n    const ownerTypeId = String(act.OWNER_TYPE_ID || '');\n    const ownerId     = String(act.OWNER_ID || '');\n\n    if (allowedPipelineSet.size > 0) {\n      if (ownerTypeId !== '2') continue;\n      if (!dealMap.has(ownerId)) continue;\n    }\n\n    const deal   = ownerTypeId === '2' ? dealMap.get(ownerId) : null;\n    const daysOv = Math.floor((todayTime - d.getTime()) / 86400000);\n\n    const dealKey = ownerId; // unique deal ID\n\n// ❌ Skip non-deal activities (important)\nif (ownerTypeId !== '2') continue;\n\n// ❌ Skip duplicates\nif (!dealMapUnique.has(dealKey)) {\n  dealMapUnique.set(dealKey, {\n    title: deal ? (deal.TITLE || `Deal #${ownerId}`) : (act.SUBJECT || 'No Subject'),\n    dueDate: formatDate(act.DEADLINE),\n    amount: deal ? `${deal.OPPORTUNITY || 0} ${deal.CURRENCY_ID || ''}`.trim() : '\\u2014',\n    status: `Overdue by ${daysOv} day(s)`,\n    daysOverdue: daysOv,\n    url: `${BITRIX_DOMAIN}/crm/deal/details/${ownerId}/`\n  });\n}\n  }\n  const deals = Array.from(dealMapUnique.values());\n\n\n  if (deals.length === 0) return;\n\n  if (!grouped.has(hodKey)) {\n    grouped.set(hodKey, {\n      hodName:   user.hodName,\n      hodEmail:  user.hodEmail,\n      employees: new Map()\n    });\n  }\n  grouped.get(hodKey).employees.set(uid, { employee: user, deals });\n}\n\nconst uids = [...userMap.keys()];\nfor (let i = 0; i < uids.length; i += CONCURRENCY) {\n  await Promise.all(uids.slice(i, i + CONCURRENCY).map(fetchActivitiesForUser));\n}\n\n// ── Assemble final output ────────────────────────────────────────────────────\nconst hodGroups = [];\nlet totalDeals = 0;\n\nfor (const h of grouped.values()) {\n  const employees = [...h.employees.values()].filter(e => e.deals.length > 0);\n  if (employees.length === 0) continue;\n  const dealCount = employees.reduce((s, e) => s + e.deals.length, 0);\n  totalDeals += dealCount;\n  \n  if (!h.hodEmail) {\n  console.log(`Skipping HOD ${h.hodName} — no email`);\n  continue;\n}\n\nhodGroups.push({\n  hodName:   h.hodName,\n  hodEmail:  h.hodEmail,\n  ccEmails:  CC_EMAILS,\n  employees\n});\n}\n\nreturn [{\n  json: {\n    senderName: SENDER_NAME,\n    runDate:    todayStr,\n    hasDeals:   hodGroups.length > 0,\n    hodGroups,\n    totalHODs:  hodGroups.length,\n    totalDeals,\n    ccEmails:   CC_EMAILS           // ← also available at top level for reference\n  }\n}];"
+      },
+      "id": "610289cd-5749-46c0-a242-b706d7c1a31a",
+      "name": "Fetch and Group Overdue Deals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -528,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "39b2cfdd-4a33-4867-9ae7-975b050d47de",
+              "leftValue": "={{ $json.hasDeals }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b80e628d-184a-4523-a898-534ae5198a1b",
+      "name": "Has Overdue Deals",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -288,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json;\nconst { hodGroups, runDate, senderName } = data;\n\nfunction esc(str = '') {\n  return String(str).replace(/[&<>\"']/g, s => ({\n    '&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'\n  }[s]));\n}\n\nconst results = [];\n\nfor (const hod of hodGroups) {\n  const { hodName, hodEmail, ccEmails = [], employees } = hod;\n\n  const totalEmployees = employees.length;\n  const totalDeals     = employees.reduce((s, e) => s + e.deals.length, 0);\n\n  const blocks = employees.map(({ employee, deals }) => {\n    const rows = deals.map(d => `\n      <tr style=\"border-bottom:1px solid #f0ede6;\">\n        <td style=\"padding:10px 8px;font-size:13px;\">${esc(d.title)}</td>\n        <td style=\"padding:10px 8px;font-size:13px;\">${esc(d.dueDate)}</td>\n        <td style=\"padding:10px 8px;font-size:13px;\">${esc(d.amount)}</td>\n        <td style=\"padding:10px 8px;font-size:12px;color:#A32D2D;font-weight:600;\">\n          ${esc(d.status)}\n        </td>\n      </tr>\n    `).join('');\n\n    return `\n      <div style=\"margin-bottom:24px;border:1px solid #e0ddd6;border-radius:10px;overflow:hidden;\">\n        <div style=\"background:#f7f5f0;padding:12px 20px;\">\n          <strong>${esc(employee.name)}</strong>\n          <span style=\"margin-left:10px;color:#666;font-size:13px;\">${deals.length} overdue deal(s)</span>\n        </div>\n        <table style=\"width:100%;border-collapse:collapse;\">\n          <thead>\n            <tr style=\"background:#faf9f6;border-bottom:2px solid #e0ddd6;\">\n              <th style=\"padding:8px;text-align:left;font-size:12px;color:#888;\">Deal / Activity</th>\n              <th style=\"padding:8px;text-align:left;font-size:12px;color:#888;\">Due Date</th>\n              <th style=\"padding:8px;text-align:left;font-size:12px;color:#888;\">Amount</th>\n              <th style=\"padding:8px;text-align:left;font-size:12px;color:#888;\">Status</th>\n            </tr>\n          </thead>\n          <tbody>${rows}</tbody>\n        </table>\n      </div>\n    `;\n  }).join('');\n\n  const html = `\n    <!DOCTYPE html>\n    <html>\n      <body style=\"margin:0;padding:0;background:#f4f1eb;font-family:Arial,sans-serif;\">\n        <div style=\"max-width:700px;margin:32px auto;background:#fff;border-radius:12px;\n                    overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);\">\n\n          <!-- Header -->\n          <div style=\"background:#1a1a2e;padding:24px 32px;\">\n            <h2 style=\"margin:0;color:#fff;font-size:20px;\">📋 Overdue Activity Report</h2>\n            <p style=\"margin:4px 0 0;color:#aaa;font-size:13px;\">${esc(senderName)} · ${esc(runDate)}</p>\n          </div>\n\n          <!-- Greeting -->\n          <div style=\"padding:24px 32px 0;\">\n            <p style=\"font-size:15px;margin:0 0 8px;\">Hi <strong>${esc(hodName)}</strong>,</p>\n            <p style=\"font-size:14px;color:#444;margin:0 0 24px;\">\n              Here is your overdue activity summary.\n              <strong>${totalEmployees}</strong> team member(s) have\n              <strong>${totalDeals}</strong> overdue deal(s) as of <strong>${esc(runDate)}</strong>.\n            </p>\n          </div>\n\n          <!-- Employee blocks -->\n          <div style=\"padding:0 32px 24px;\">\n            ${blocks}\n          </div>\n\n          <!-- Footer -->\n          <div style=\"background:#f7f5f0;padding:16px 32px;border-top:1px solid #e0ddd6;\">\n            <p style=\"margin:0;font-size:12px;color:#999;\">\n              This is an automated report. Please do not reply to this email.\n            </p>\n          </div>\n        </div>\n      </body>\n    </html>\n  `;\n\n  if (!hodEmail) {\n  console.log(`Skipping email for ${hodName} — no email`);\n  continue;\n}\n  \n  results.push({\n    json: {\n      hodName,\n      hodEmail,\n      ccEmails,                              // ← passed through for the Send Email node\n      ccEmailsString: ccEmails.join(', '),   // ← comma-separated string (some email nodes need this format)\n      emailHtml:    html,\n      emailSubject: `[Overdue Summary] ${totalDeals} deal(s) across ${totalEmployees} member(s) – ${runDate}`\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "45cd75b7-22a8-4328-bff7-03f26fd6e5cd",
+      "name": "Build HOD Summary Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst { hodName, runDate, senderName, hodEmail } = $json;\nconst html = `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"></head><body style=\"margin:0;padding:0;background:#f4f4f0;font-family:sans-serif;\"><div style=\"max-width:600px;margin:32px auto;background:white;border-radius:12px;padding:32px;border:1px solid #d3d1c7;text-align:center;\"><div style=\"font-size:48px;margin-bottom:16px;\">&#10003;</div><h2 style=\"color:#1a3a2a;margin:0 0 12px;\">All Clear!</h2><p style=\"color:#5f5e5a;\">Hi ${hodName}, no overdue deals from yesterday or earlier as of ${runDate}.</p><p style=\"font-size:12px;color:#888780;margin-top:24px;\">Automated morning report from ${senderName}. Do not reply.</p></div></body></html>`;\nreturn [{ json: { hodName, hodEmail, senderName, runDate, emailHtml: html, emailSubject: `[Morning Summary] No Overdue Deals - ${runDate}` } }];\n"
+      },
+      "id": "bb61f9d3-1f4c-44cc-8cda-434a72a63a6c",
+      "name": "Build No Deals Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const payload = $json;\n\nconst tokenRes = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://login.microsoftonline.com/f284e063-bc3b-44ac-b38c-418c4012e4e8/oauth2/v2.0/token',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: 'grant_type=client_credentials&client_id=e5c42145-d918-4fb3-989d-bcc2093e5a42&client_secret=0xm8Q~WQHXtDZBy2Aitz6U.7Hgm9BRkst2MJOdhr&scope=https%3A%2F%2Fgraph.microsoft.com%2F.default',\n});\n\nconst token = typeof tokenRes === 'string' ? JSON.parse(tokenRes) : tokenRes;\n\nreturn {\n  json: {\n    hodName:      payload.hodName,\n    hodEmail:     payload.hodEmail,\n    ccEmails:     payload.ccEmails || [],\n    senderName:   payload.senderName,\n    runDate:      payload.runDate,\n    emailHtml:    payload.emailHtml,\n    emailSubject: payload.emailSubject,\n    access_token: token.access_token\n  }\n};"
+      },
+      "id": "56ca4756-79e9-4978-b1b4-217747bdbca3",
+      "name": "Fetch Token and Attach",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        256,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/users/info@averlonworld.com/sendMail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message",
+              "value": "={{\n{\n  subject: $json.emailSubject,\n  body: {\n    contentType: \"HTML\",\n    content: $json.emailHtml\n  },\n  toRecipients: [\n    {\n      emailAddress: {\n        address: $json.hodEmail,\n        name: $json.hodName\n      }\n    }\n  ],\n  ccRecipients: ($json.ccEmails || []).map(email => ({\n    emailAddress: { address: email }\n  }))\n}\n}}"
+            },
+            {
+              "name": "=saveToSentItems",
+              "value": "=true"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "5160b435-3213-4a77-a60b-e89231a84dec",
+      "name": "Send HOD Summary Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        528,
+        96
+      ],
+      "retryOnFail": true,
+      "executeOnce": true,
+      "waitBetweenTries": 5000,
+      "maxTries": 5
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger 11AM IST": {
+      "main": [
+        [
+          {
+            "node": "Fetch and Group Overdue Deals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch and Group Overdue Deals": {
+      "main": [
+        [
+          {
+            "node": "Has Overdue Deals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Overdue Deals": {
+      "main": [
+        [
+          {
+            "node": "Build HOD Summary Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build No Deals Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build HOD Summary Email": {
+      "main": [
+        [
+          {
+            "node": "Fetch Token and Attach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build No Deals Email": {
+      "main": [
+        [
+          {
+            "node": "Fetch Token and Attach",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Token and Attach": {
+      "main": [
+        [
+          {
+            "node": "Send HOD Summary Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ddda54ca-9210-4031-b613-c27665a42301",
+  "meta": {
+    "instanceId": "f8721a2f491e95c5e6129a6e36c27a6ad54a391f13843e10874c1c64d7cca928"
+  },
+  "id": "AamWyGQjG6tNmltC",
+  "tags": []
+}

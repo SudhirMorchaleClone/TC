@@ -1,0 +1,267 @@
+{
+  "name": "Workflow 3 — Bitrix24 Team",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// ESCALATION EMAIL BUILDER — Workflow 3, Node 4\n// ============================================================\n\nconst data = $json;\n//const emp = data.employee;\nconst emp = data.employee || {};\n\n// ---- HARD VALIDATION (prevents Bad Request) ----\nif (!emp.email) {\n  throw new Error(\"Employee email missing\");\n}\n\nif (!data.hodEmail) {\n  throw new Error(\"HOD email missing\");\n}\n\n\n//const allDeals = data.deals;\nconst allDeals = data.details || data.deals || [];\nconst max = data.maxDealsPerMsg || 8;\n\n//const senderName = data.senderName;\n//const dealListUrl = data.dealListUrl;\n\nconst senderName = data.senderName || 'Averlon System';\nconst dealListUrl = data.dealListUrl || '#';\nconst totalDeals = data.totalDeals || allDeals.length;\n\nconst shownDeals = allDeals.slice(0, max);\nconst remainingCount = allDeals.length - shownDeals.length;\n\nfunction escapeHtml(str = '') {\n  return String(str).replace(/[&<>\"']/g, s => ({\n    '&': '&amp;', '<': '&lt;', '>': '&gt;',\n    '\"': '&quot;', \"'\": '&#39;'\n  }[s]));\n}\n\nfunction safeJson(str) {\n  return JSON.stringify(str || \"\");\n}\n\nfunction dealRowHtml(deal, index) {\n  const statusColor = deal.status === 'PAST_OVERDUE' ? '#E24B4A'\n    : deal.status === 'TODAY' ? '#BA7517' : '#0F6E56';\n  const statusText = deal.status === 'PAST_OVERDUE'\n    ? `⚠ Overdue by ${deal.daysOverdue} day(s)`\n    : deal.status === 'TODAY' ? '🔴 Due Today' : `Due ${escapeHtml(deal.closeDateFormatted || 'No date')}`;\n\n  return `\n  <tr style=\"border-bottom: 1px solid #e8e8e8;\">\n    <td style=\"padding: 12px 8px; font-size: 14px; color: #2c2c2a; font-weight: 500;\">${index + 1}. ${escapeHtml(deal.title || deal.subject || 'Deal')}</td>\n    <td style=\"padding: 12px 8px; font-size: 13px; color: #5f5e5a;\">${escapeHtml(deal.closeDateFormatted || 'No date')}</td>\n    <td style=\"padding: 12px 8px; font-size: 12px; color: ${statusColor}; font-weight: 600;\">${statusText}</td>\n    <td style=\"padding: 12px 8px;\">\n      <a href=\"${deal.dealUrl || deal.url || '#'}\" style=\"background: #A32D2D; color: white; font-size: 12px; padding: 5px 12px; border-radius: 6px; text-decoration: none;\">View →</a>\n    </td>\n  </tr>`;\n}\n\nconst dealRowsHtml = shownDeals.map((d, i) => dealRowHtml(d, i)).join('');\n\nconst remainingHtml = remainingCount > 0 ? `\n  <div style=\"margin: 16px 0; padding: 12px 16px; background: #FCEBEB; border-radius: 8px; font-size: 14px; color: #A32D2D;\">\n    And <strong>${remainingCount} more deal(s)</strong> still pending. \n    <a href=\"${dealListUrl}\" style=\"color: #A32D2D; font-weight: 600;\">View all →</a>\n  </div>` : '';\n\n// ---- EMPLOYEE EMAIL ----\nconst empEmailHtml = `\n<!DOCTYPE html><html><head><meta charset=\"UTF-8\"></head>\n<body style=\"margin:0;padding:0;background:#f4f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">\n  <div style=\"max-width:620px;margin:32px auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #d3d1c7;\">\n    <div style=\"background:#A32D2D;padding:28px 32px;\">\n      <div style=\"font-size:11px;color:#F7C1C1;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;\">${senderName}</div>\n      <h1 style=\"margin:0;color:white;font-size:22px;font-weight:600;\">⚠ Final Escalation Alert</h1>\n      <div style=\"color:#F7C1C1;font-size:13px;margin-top:6px;\">6:30 PM · ${data.runDate || ''}</div>\n    </div>\n    <div style=\"padding:24px 32px 0;\">\n      <p style=\"font-size:15px;color:#2c2c2a;margin:0 0 8px;\">Hi <strong>${escapeHtml(emp.name || 'User')}</strong>,</p>\n      <p style=\"font-size:14px;color:#5f5e5a;margin:0 0 8px;\">This is your <strong>final escalation</strong> for today. You still have <strong>${totalDeals} unresolved deal(s)</strong>. Your HOD has been notified.</p>\n      <p style=\"font-size:14px;color:#A32D2D;font-weight:500;margin:0 0 20px;\">Please update these deals immediately.</p>\n    </div>\n    <div style=\"padding:0 32px;\">\n      <table style=\"width:100%;border-collapse:collapse;\">\n        <thead>\n          <tr style=\"background:#f1efe8;\">\n            <th style=\"padding:10px 8px;text-align:left;font-size:12px;color:#888780;font-weight:600;\">Deal Name</th>\n            <th style=\"padding:10px 8px;text-align:left;font-size:12px;color:#888780;font-weight:600;\">Due Date</th>\n            <th style=\"padding:10px 8px;text-align:left;font-size:12px;color:#888780;font-weight:600;\">Status</th>\n            <th style=\"padding:10px 8px;text-align:left;font-size:12px;color:#888780;font-weight:600;\">Action</th>\n          </tr>\n        </thead>\n        <tbody>${dealRowsHtml}</tbody>\n      </table>\n    </div>\n    ${remainingHtml}\n    <div style=\"padding:24px 32px;border-top:1px solid #e8e8e8;margin-top:16px;\">\n      <p style=\"font-size:12px;color:#888780;margin:0;\">Automated alert from ${senderName}. Do not reply.</p>\n    </div>\n  </div>\n</body></html>`;\n\n// ---- HOD CC EMAIL (summary of this one employee) ----\nconst hodEmailHtml = `\n<!DOCTYPE html><html><head><meta charset=\"UTF-8\"></head>\n<body style=\"margin:0;padding:0;background:#f4f4f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;\">\n  <div style=\"max-width:620px;margin:32px auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #d3d1c7;\">\n    <div style=\"background:#633806;padding:28px 32px;\">\n      <div style=\"font-size:11px;color:#FAC775;font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;\">${senderName}</div>\n      <h1 style=\"margin:0;color:white;font-size:22px;font-weight:600;\">HOD Escalation CC</h1>\n      <div style=\"color:#FAC775;font-size:13px;margin-top:6px;\">6:30 PM escalation · ${data.runDate || ''}</div>\n    </div>\n    <div style=\"padding:24px 32px 0;\">\n      <p style=\"font-size:15px;color:#2c2c2a;margin:0 0 8px;\">Hi <strong>${escapeHtml(data.hodName || 'Manager')}</strong>,</p>\n      <p style=\"font-size:14px;color:#5f5e5a;margin:0 0 20px;\">Your team member <strong>${escapeHtml(emp.name || 'User')}</strong> (${escapeHtml(emp.email)}) has <strong>${totalDeals} unresolved deal(s)</strong> as of 6:30 PM today. They have been notified separately.</p>\n    </div>\n    <div style=\"padding:0 32px;\">\n      <table style=\"width:100%;border-collapse:collapse;\">\n        <thead>\n          <tr style=\"background:#f1efe8;\">\n            <th style=\"padding:10px 8px;text-align:left;font-size:12px;color:#888780;font-weight:600;\">Deal Name</th>\n            <th style=\"padding:10px 8px;text-align:left;font-size:12px;color:#888780;font-weight:600;\">Due Date</th>\n            <th style=\"padding:10px 8px;text-align:left;font-size:12px;color:#888780;font-weight:600;\">Status</th>\n            <th style=\"padding:10px 8px;text-align:left;font-size:12px;color:#888780;font-weight:600;\">Action</th>\n          </tr>\n        </thead>\n        <tbody>${dealRowsHtml}</tbody>\n      </table>\n    </div>\n    ${remainingHtml}\n    <div style=\"padding:24px 32px;border-top:1px solid #e8e8e8;margin-top:16px;\">\n      <p style=\"font-size:12px;color:#888780;margin:0;\">Automated alert from ${senderName}. Do not reply.</p>\n    </div>\n  </div>\n</body></html>`;\n\nreturn [{\n  json: {\n    ...data,\n    escalation: {\n      empEmailHtml: empEmailHtml,\n  hodEmailHtml: hodEmailHtml,\n      empEmailSubject: `[ESCALATION] ${totalDeals} Unresolved Deals — Action Required`,\n      hodEmailSubject: `[HOD ALERT] ${emp.name || 'User'} has ${totalDeals} overdue deal(s) — 6:30 PM Escalation`,\n      empEmail: emp.email,\n      empName: emp.name,\n      hodEmail: data.hodEmail,\n      hodName: data.hodName\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -960,
+        16
+      ],
+      "id": "d874748b-ad63-4bfd-8f02-75716187c602",
+      "name": "Function — Build Escalation Email"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "577b9124-e585-41eb-a56d-24a6a33abee8",
+              "leftValue": "={{ $json.totalDeals }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1184,
+        32
+      ],
+      "id": "dc07b9d9-f4a6-4de9-aa94-6149f4e13ae1",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://login.microsoftonline.com/f284e063-bc3b-44ac-b38c-418c4012e4e8/oauth2/v2.0/token",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "client_credentials"
+            },
+            {
+              "name": "client_id",
+              "value": "e5c42145-d918-4fb3-989d-bcc2093e5a42"
+            },
+            {
+              "name": "client_secret",
+              "value": "0xm8Q~WQHXtDZBy2Aitz6U.7Hgm9BRkst2MJOdhr"
+            },
+            {
+              "name": "scope",
+              "value": "https://graph.microsoft.com/.default"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -768,
+        208
+      ],
+      "id": "f81010e6-76fa-4140-890d-da6963c7c63b",
+      "name": "Fetch Outlook Token"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ac4dafd6-2d06-47a7-ab1d-09ace87c7844",
+              "leftValue": "=={{ $json.statusCode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "b6ffab73-a030-4e48-a824-3121b4e6ebe0",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1424,
+        16
+      ],
+      "id": "ce06a3e3-bcd8-41aa-ac83-f390d03f8f7f",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/users/info@averlonworld.com/sendMail",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization ",
+              "value": "=Bearer {{ $json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"subject\": \"={{ $json.escalation.empEmailSubject }}\",\n    \"body\": {\n      \"contentType\": \"HTML\",\n      \"content\": \"={{ $json.escalation.empEmailHtml.replace(/\\\"/g, '&quot;').replace(/\\n/g, '') }}\"\n    },\n    \"toRecipients\": [\n      {\n        \"emailAddress\": {\n          \"address\": \"={{ $json.escalation.empEmail }}\",\n          \"name\": \"={{ $json.escalation.empName }}\"\n        }\n      }\n    ]\n  },\n  \"saveToSentItems\": true\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -288,
+        64
+      ],
+      "id": "954c98f1-ee65-4830-9ce4-d5c9576c0e1a",
+      "name": "Send Employee Email"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -544,
+        64
+      ],
+      "id": "aae4ea28-186b-4b4a-8099-21bfaf354e96",
+      "name": "Merge"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Function — Build Escalation Email": {
+      "main": [
+        [
+          {
+            "node": "Fetch Outlook Token",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Function — Build Escalation Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Outlook Token": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Employee Email": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Send Employee Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "99dd4311-5805-401a-abd1-dd2c94226bcf",
+  "meta": {
+    "instanceId": "f8721a2f491e95c5e6129a6e36c27a6ad54a391f13843e10874c1c64d7cca928"
+  },
+  "id": "xGo56TFHPSYgadUt",
+  "tags": []
+}

@@ -1,0 +1,651 @@
+{
+  "name": "C1ActivityDeadline",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// RENEWAL ALERT SYSTEM — Deal Fetcher & Filter Engine\n// Fetches open deals → filters by service type & renewal date\n// within next 30 days → groups by owner → routes to dispatchers\n//\n// Notification targets: deal ASSIGNED_BY_ID + last observer\n// No department filter — any deal owner is a valid target\n// ============================================================\n\nconst MAIN_WEBHOOK  = 'https://intranet.rajlaxmiworld.com/rest/316/du14lqdt4ijmvzx4';\nconst BITRIX_DOMAIN = 'https://intranet.rajlaxmiworld.com';\nconst BREVO_API_KEY = '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';\nconst FROM_EMAIL    = 'info@averlonworld.com';\nconst FROM_NAME     = 'Averlon CRM';\nconst HOD_USER_ID   = '316';\nconst HOD_NAME      = 'Dr. Aarti Arya';\nconst HOD_EMAIL     = 'dr.aartiarya@rajlaxmiworld.com';\nconst MAX_DEALS_PER_MSG   = 8;\nconst RENEWAL_WINDOW_DAYS = 30;\n\nconst SERVICE_GROUPS = {};\n//const SELECTED_EMPLOYEES = [];\n\n//const SELECTED_EMPLOYEES = [{id:'71603', name:'Mohd Awaish', email:'awaish@rajlaxmiworld.com'}];\nconst SELECTED_EMPLOYEES = [];\n\n\n\n// ── IST time setup ────────────────────────────────────────\nconst IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;\nconst now           = new Date();\nconst nowIST        = new Date(now.getTime() + IST_OFFSET_MS);\nconst todayStr      = nowIST.toISOString().slice(0, 10);\nconst istHour       = nowIST.getUTCHours();\nconst istMinute     = nowIST.getUTCMinutes();\n\n// ── Trigger slot detection ────────────────────────────────\nconst isReminder1  = (istHour === 10 && istMinute >= 0 && istMinute < 59);\nconst isReminder2  = (istHour === 13 && istMinute >= 0 && istMinute < 55);\nconst isReminder3  = (istHour === 17 && istMinute >= 0 && istMinute < 55);\nconst isEscalation = (istHour === 18 && istMinute >= 0 && istMinute < 59);\nconst isAnySlot    = isReminder1 || isReminder2 || isReminder3 || isEscalation;\nconst isReminder   = isReminder1 || isReminder2 || isReminder3;\n\nconst route       = isEscalation ? 'ESCALATION' : isReminder ? 'REMINDER' : 'NONE';\nconst triggerSlot = isReminder1 ? '10:30am' : isReminder2 ? '1pm' : isReminder3 ? '5pm' : isEscalation ? '6:30pm' : 'unknown';\n\nconsole.log(`\\n${'═'.repeat(60)}`);\nconsole.log(`🔄 RENEWAL ALERT SYSTEM | IST: ${istHour}:${String(istMinute).padStart(2, '0')} | Slot: ${triggerSlot}`);\nconsole.log('═'.repeat(60));\n\nif (!isAnySlot) {\n  console.log(`⏱ Not a scheduled slot — skipping.`);\n  return [{ json: { hasDeals: false, message: `Not a scheduled slot (${istHour}:${String(istMinute).padStart(2, '0')} IST)`, runDate: todayStr } }];\n}\n\n// ────────────────────────────────────────────────────────────\n// UTILITY FUNCTIONS\n// ────────────────────────────────────────────────────────────\n\nfunction parseDate(str) {\n  if (!str) return null;\n  const [y, m, d] = str.split('-').map(Number);\n  if (!y || !m || !d) return null;\n  return new Date(y, m - 1, d);\n}\n\nfunction parseBitrixDate(dateStr) {\n  if (!dateStr) return null;\n  const part = new Date(dateStr).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });\n  return parseDate(part);\n}\n\nfunction daysUntil(dateStr) {\n  const d = parseBitrixDate(dateStr);\n  if (!d) return null;\n  return Math.floor((d - parseDate(todayStr)) / 86400000);\n}\n\nfunction formatDate(dateStr) {\n  const d = parseBitrixDate(dateStr);\n  if (!d) return '—';\n  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });\n}\n\nfunction filterByService(deal) {\n  const title = (deal.TITLE || '').toLowerCase();\n  return Object.values(SERVICE_GROUPS).some(group =>\n    group.some(keyword => title.includes(keyword))\n  );\n}\n\nfunction groupByOwner(deals) {\n  const groups = {};\n  for (const deal of deals) {\n    const ownerId = String(deal.ASSIGNED_BY_ID || 'unassigned');\n    if (!groups[ownerId]) groups[ownerId] = [];\n    groups[ownerId].push(deal);\n  }\n  return groups;\n}\n\nfunction dealUrl(id) {\n  return `${BITRIX_DOMAIN}/crm/deal/details/${id}/`;\n}\n\nfunction extractEmail(u) {\n  if (Array.isArray(u.EMAIL))      return u.EMAIL[0]?.VALUE || '';\n  if (typeof u.EMAIL === 'string') return u.EMAIL;\n  return '';\n}\n\nfunction buildUserRecord(u) {\n  return {\n    id:    String(u.ID),\n    name:  `${u.NAME || ''} ${u.LAST_NAME || ''}`.trim() || `User #${u.ID}`,\n    email: extractEmail(u).trim()\n  };\n}\n\n// ── Parallel fetch helper with concurrency cap ────────────\n// Runs up to `concurrency` promises at once instead of one-at-a-time.\nasync function parallelMap(items, asyncFn, concurrency = 20) {\n  const results = new Array(items.length);\n  let index = 0;\n\n  async function worker() {\n    while (index < items.length) {\n      const i = index++;\n      results[i] = await asyncFn(items[i], i);\n    }\n  }\n\n  const workers = Array.from({ length: Math.min(concurrency, items.length) }, worker);\n  await Promise.all(workers);\n  return results;\n}\n\n// ────────────────────────────────────────────────────────────\n// STEP 1 — Fetch ALL active users → allUserMap\n//   Resolves name + email for any user ID (owner or observer)\n//   No department filtering — all users are loaded\n// ────────────────────────────────────────────────────────────\nconsole.log(`\\n📡 STEP 1 — Fetching all active users`);\n\nlet allUsersRaw = [];\ntry {\n  const firstRes = await this.helpers.request({\n    method: 'GET',\n    url: `${MAIN_WEBHOOK}/user.get.json?filter[ACTIVE]=true&start=0`,\n    json: true\n  });\n  allUsersRaw = firstRes.result || [];\n\n  if (firstRes.total && firstRes.total > 50) {\n    const totalPages = Math.ceil(firstRes.total / 50);\n    const pageStarts = Array.from({ length: totalPages - 1 }, (_, i) => (i + 1) * 50);\n\n    const pageResults = await parallelMap(pageStarts, async (start) => {\n      const res = await this.helpers.request({\n        method: 'GET',\n        url: `${MAIN_WEBHOOK}/user.get.json?filter[ACTIVE]=true&start=${start}`,\n        json: true\n      });\n      return res.result || [];\n    }, 10);\n\n    for (const batch of pageResults) allUsersRaw = allUsersRaw.concat(batch);\n  }\n} catch (e) {\n  throw new Error(`[MAIN] User fetch failed: ${e.message}`);\n}\n\nconst allUserMap = {};\nfor (const u of allUsersRaw) {\n  allUserMap[String(u.ID)] = buildUserRecord(u);\n}\nconsole.log(`   ✅ ${allUsersRaw.length} active users loaded`);\n\nconst selectedIds  = new Set(SELECTED_EMPLOYEES.map(e => String(e.id)));\nconst hasSelection = selectedIds.size > 0;\nif (hasSelection) {\n  console.log(`   🎯 Notification restricted to owner IDs: [${[...selectedIds].join(', ')}]`);\n} else {\n  console.log(`   🎯 No restriction — all deal owners will be notified`);\n}\n\n// ────────────────────────────────────────────────────────────\n// STEP 2 — Fetch ALL open deals (with UF_CRM_RENEWAL_DATE)\n// ────────────────────────────────────────────────────────────\nconsole.log(`\\n📡 STEP 2 — Fetching open deals`);\n\nlet allDeals = [];\ntry {\n  const firstRes = await this.helpers.request({\n    method: 'GET',\n    url: `${MAIN_WEBHOOK}/crm.deal.list.json?filter[CLOSED]=N` +\n         `&select[]=ID&select[]=TITLE&select[]=ASSIGNED_BY_ID` +\n         `&select[]=CLOSEDATE&select[]=UF_CRM_RENEWAL_DATE&start=0`,\n    json: true\n  });\n  allDeals = firstRes.result || [];\n\n  if (firstRes.total && firstRes.total > 50) {\n    const totalPages = Math.ceil(firstRes.total / 50);\n    const pageStarts = Array.from({ length: totalPages - 1 }, (_, i) => (i + 1) * 50);\n\n    const pageResults = await parallelMap(pageStarts, async (start) => {\n      const res = await this.helpers.request({\n        method: 'GET',\n        url: `${MAIN_WEBHOOK}/crm.deal.list.json?filter[CLOSED]=N` +\n             `&select[]=ID&select[]=TITLE&select[]=ASSIGNED_BY_ID` +\n             `&select[]=CLOSEDATE&select[]=UF_CRM_RENEWAL_DATE&start=${start}`,\n        json: true\n      });\n      return res.result || [];\n    }, 10);\n\n    for (const batch of pageResults) allDeals = allDeals.concat(batch);\n  }\n} catch (e) {\n  throw new Error(`[MAIN] Deal fetch failed: ${e.message}`);\n}\nconsole.log(`   ✅ ${allDeals.length} open deals fetched`);\n\n// ────────────────────────────────────────────────────────────\n// STEP 3 — Filter by service type (TITLE match)\n// ────────────────────────────────────────────────────────────\nconsole.log(`\\n🔍 STEP 3 — Filtering by service groups`);\n\nconst serviceDeals = allDeals;\n\n// ── Fetch activities for ALL serviceDeals in parallel ─────\n// No pre-filter applied — activity deadline takes priority over\n// deal date fields, so a deal with a far CLOSEDATE may still\n// qualify via a near activity deadline. We must fetch all.\nconsole.log(`\\n📡 Fetching activities for ${serviceDeals.length} deals (parallel, concurrency=20)`);\n\nconst activityMap = {};\nawait parallelMap(serviceDeals, async (deal) => {\n  try {\n    const res = await this.helpers.request({\n      method: 'GET',\n      url: `${MAIN_WEBHOOK}/crm.activity.list.json` +\n           `?filter[OWNER_TYPE_ID]=2&filter[OWNER_ID]=${deal.ID}` +\n           `&select[]=ID&select[]=RESPONSIBLE_ID&select[]=CREATED&select[]=DEADLINE` +\n           `&order[CREATED]=DESC&start=0`,\n      json: true\n    });\n    const activities = res.result || [];\n    if (activities.length > 0) {\n      activityMap[String(deal.ID)] = {\n        observerId: String(activities[0].RESPONSIBLE_ID),\n        deadline:   activities[0].DEADLINE\n      };\n    }\n  } catch (e) {\n    console.log(`   ⚠️ Activity fetch skipped for deal ${deal.ID}: ${e.message}`);\n  }\n}, 20);\n\nconsole.log(`   ✅ ${serviceDeals.length} deals match target services`);\n\n// ────────────────────────────────────────────────────────────\n// STEP 4 — Filter by renewal date (0 to +30 days)\n//   UF_CRM_RENEWAL_DATE takes priority; falls back to CLOSEDATE\n// ────────────────────────────────────────────────────────────\nconsole.log(`\\n📅 STEP 4 — Filtering renewal dates (next ${RENEWAL_WINDOW_DAYS} days)`);\n\nconst renewalDeals = [];\nlet skippedNoDate = 0, skippedOutOfWindow = 0;\n\nfor (const deal of serviceDeals) {\n  const activity   = activityMap[String(deal.ID)];\n  const renewalRaw = activity?.deadline || deal.UF_CRM_RENEWAL_DATE || deal.CLOSEDATE;\n\n  if (!renewalRaw) { skippedNoDate++; continue; }\n\n  const days = daysUntil(renewalRaw);\n  if (days === null || days < -RENEWAL_WINDOW_DAYS || days > RENEWAL_WINDOW_DAYS) { skippedOutOfWindow++; continue; }\n\n  renewalDeals.push({\n    ...deal,\n    _renewalDateRaw:       renewalRaw,\n    _renewalDateFormatted: formatDate(renewalRaw),\n    _daysLeft:             days,\n    _renewalStatus:        'UPCOMING_30_DAYS',\n    _dealUrl:              dealUrl(deal.ID)\n  });\n}\n\nrenewalDeals.sort((a, b) => a._daysLeft - b._daysLeft);\n\nconsole.log(`   ✅ ${renewalDeals.length} deals renewing within ${RENEWAL_WINDOW_DAYS} days`);\nconsole.log(`   ⬜ Skipped (no date)      : ${skippedNoDate}`);\nconsole.log(`   ⬜ Skipped (out of window): ${skippedOutOfWindow}`);\n\nif (renewalDeals.length === 0) {\n  return [{\n    json: {\n      hasDeals: false,\n      message:  `No renewal deals in next ${RENEWAL_WINDOW_DAYS} days`,\n      isReminder, isEscalation, route, triggerSlot, runDate: todayStr\n    }\n  }];\n}\n\n// ────────────────────────────────────────────────────────────\n// STEP 5 — Resolve last activity observer per deal\n// ────────────────────────────────────────────────────────────\nconsole.log(`\\n📡 STEP 5 — Resolving last observer per deal`);\nconsole.log(`   ✅ Observer resolved for ${Object.keys(activityMap).length} deal(s)`);\n\n// ────────────────────────────────────────────────────────────\n// STEP 6 — Group by owner & build output items\n// ────────────────────────────────────────────────────────────\nconsole.log(`\\n📊 STEP 6 — Grouping by deal owner`);\n\nconst ownerGroups = groupByOwner(renewalDeals);\nconst output = [];\n\nfor (const [ownerId, deals] of Object.entries(ownerGroups)) {\n\n  if (hasSelection && !selectedIds.has(ownerId)) {\n    console.log(`   ⏭ Skipping owner ${ownerId} (not in SELECTED_EMPLOYEES)`);\n    continue;\n  }\n\n  const owner = allUserMap[ownerId] || { id: ownerId, name: `User #${ownerId}`, email: '' };\n\n  const observerIds = [...new Set(\n    deals\n      .map(d => activityMap[String(d.ID)]?.observerId)\n      .filter(id => id && id !== ownerId)\n  )];\n\n  const observers = observerIds.map(id =>\n    allUserMap[id] || { id, name: `User #${id}`, email: '' }\n  );\n\n  const notifyTargets = [owner, ...observers].filter((t, i, arr) =>\n    arr.findIndex(x => x.id === t.id) === i\n  );\n\n  const dealItems = deals.map(d => {\n    const obsId   = activityMap[String(d.ID)]?.observerId || null;\n    const obsName = obsId ? (allUserMap[obsId]?.name || `User #${obsId}`) : null;\n    return {\n      id:                   String(d.ID),\n      title:                d.TITLE || `Deal #${d.ID}`,\n      renewalDate:          d._renewalDateRaw,\n      renewalDateFormatted: d._renewalDateFormatted,\n      daysLeft:             d._daysLeft,\n      renewalStatus:        d._renewalStatus,\n      assignedById:         String(d.ASSIGNED_BY_ID),\n      assignedByName:       owner.name,\n      assignedByEmail:      owner.email,\n      observerId:           obsId,\n      observerName:         obsName,\n      url:                  d._dealUrl\n    };\n  });\n\n  console.log(`   👤 ${owner.name} (${ownerId}) — ${owner.email || 'no email'} | ${dealItems.length} deal(s) | observers: [${observerIds.join(', ') || 'none'}]`);\n\n  output.push({\n    json: {\n      employee:       owner,\n      notifyTargets,\n      deals:          dealItems,\n      totalDeals:     dealItems.length,\n      hasDeals:       true,\n      triggerSlot,\n      isReminder,\n      isEscalation,\n      route,\n      mainWebhook:    MAIN_WEBHOOK,\n      brevoApiKey:    BREVO_API_KEY,\n      fromEmail:      FROM_EMAIL,\n      fromName:       FROM_NAME,\n      hodUserId:      HOD_USER_ID,\n      hodName:        HOD_NAME,\n      hodEmail:       HOD_EMAIL,\n      bitrixDomain:   BITRIX_DOMAIN,\n      maxDealsPerMsg: MAX_DEALS_PER_MSG,\n      runDate:        todayStr\n    }\n  });\n}\n\nconsole.log(`\\n${'═'.repeat(60)}`);\nconsole.log(`✅ DONE: ${renewalDeals.length} renewal deal(s) → ${output.length} owner notification(s)`);\nconsole.log('═'.repeat(60));\n\nif (output.length === 0) {\n  return [{\n    json: {\n      hasDeals: false,\n      message:  `No notifiable owners found for renewal deals`,\n      isReminder, isEscalation, route, triggerSlot, runDate: todayStr\n    }\n  }];\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1808,
+        208
+      ],
+      "id": "13674b13-6ffd-429c-9e10-be51f9426372",
+      "name": "Renewal alert code node"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "417145d3-d921-460f-8a8c-c988bdb671d8",
+              "leftValue": "={{ $json.hasDeals }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2064,
+        0
+      ],
+      "id": "5ac1cc44-bca7-4dab-9ab2-49f4feec7aca",
+      "name": "2ndWorkflow"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        496
+      ],
+      "id": "878e6846-9633-4ce2-b6e9-d4ab1cc1d02c",
+      "name": "data share to 3rd workflow"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1536,
+        208
+      ],
+      "id": "54058ccf-712e-4b0c-b3b7-42b9925e8da6",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "url": "={{$node[\"Edit Fields\"].json[\"BITRIX_WEBHOOK\"]}}/crm.activity.list.json?filter[COMPLETED]=N&select[]=ID&select[]=SUBJECT&select[]=DEADLINE&select[]=COMPLETED&select[]=RESPONSIBLE_ID&select[]=BINDINGS&select[]=TYPE_ID",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "{\n  \"filter\": {\n    \"COMPLETED\": \"N\"\n  },\n  \"select\": [\n    \"ID\",\n    \"SUBJECT\",\n    \"DEADLINE\",\n    \"COMPLETED\",\n    \"RESPONSIBLE_ID\",\n    \"BINDINGS\",\n    \"TYPE_ID\"\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1056,
+        352
+      ],
+      "id": "65f2fe08-52b3-4be6-8e27-aa28edd5b52f",
+      "name": "Fetch Activities HTTP Request",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1328,
+        32
+      ],
+      "id": "6d689944-90fe-4e99-80fb-a07582de95e2",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "url": "={{$json[\"BITRIX_WEBHOOK\"]}}/user.get.json?filter[ACTIVE]=true",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "={\n  \"filter\": { \"ACTIVE\": true },\n  \"select\": [\"ID\", \"NAME\", \"LAST_NAME\", \"EMAIL\", \"UF_DEPARTMENT\"]\n}",
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1056,
+        128
+      ],
+      "id": "e3a33f84-c21f-4cef-8ac3-fd5959ab80ab",
+      "name": "Fetch Users HTTP Request",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "={{$json[\"BITRIX_WEBHOOK\"]}}/crm.deal.list.json?filter[CLOSED]=N&select[]=ID&select[]=TITLE&select[]=CLOSEDATE&select[]=BEGINDATE&select[]=DATE_MODIFY&select[]=ASSIGNED_BY_ID&select[]=STAGE_ID",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "{\n  \"filter\": {\n    \"CLOSED\": \"N\"\n  },\n  \"select\": [\"ID\", \"TITLE\", \"CLOSEDATE\", \"BEGINDATE\", \"DATE_MODIFY\", \"ASSIGNED_BY_ID\", \"STAGE_ID\"],\n  \"order\": { \"CLOSEDATE\": \"ASC\" },\n  \"start\": 0\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1072,
+        -112
+      ],
+      "id": "ee195866-4509-4cdb-90f5-e23e76e7408a",
+      "name": "Deals HTTP Request",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7758ebbe-4320-4c6b-9499-458b1070499f",
+              "name": "BITRIX_WEBHOOK",
+              "value": "https://intranet.rajlaxmiworld.com/rest/316/du14lqdt4ijmvzx4",
+              "type": "string"
+            },
+            {
+              "id": "8c070a0d-2fe8-4cde-922c-6e95bcf20792",
+              "name": "BREVO_API_KEY",
+              "value": "xkeysib-XXXXXXXXX",
+              "type": "string"
+            },
+            {
+              "id": "734b8d67-57b0-45df-b2f5-5613cd848f9d",
+              "name": "BITRIX_DOMAIN",
+              "value": "https://intranet.rajlaxmiworld.com",
+              "type": "string"
+            },
+            {
+              "id": "af950c72-2758-40f1-a255-ed0bf8ef6a7d",
+              "name": "HOD_USER_ID",
+              "value": "316",
+              "type": "string"
+            },
+            {
+              "id": "6a1af5ae-9b03-4008-ad47-199f960426d8",
+              "name": "HOD_EMAIL",
+              "value": "Dr. Aarti Arya",
+              "type": "string"
+            },
+            {
+              "id": "8c49c31e-6f1c-4e5b-9c2a-ca73b765bf09",
+              "name": "HOD_NAME",
+              "value": "Dr. Aarti Arya",
+              "type": "string"
+            },
+            {
+              "id": "277159d4-2aaf-47ae-bed6-74383e35562d",
+              "name": "TARGET_DEPARTMENT ",
+              "value": "Bitrix24 Team",
+              "type": "string"
+            },
+            {
+              "id": "fa8f3a2b-5070-4df1-b81c-4e34ca8d68f2",
+              "name": "BITRIX_DEAL_LIST_URL",
+              "value": "https://intranet.rajlaxmiworld.com/crm/deal/list/",
+              "type": "string"
+            },
+            {
+              "id": "f343a887-eb1c-4691-bacd-fcb8db0fde59",
+              "name": "MAX_DEALS_PER_MSG",
+              "value": "8",
+              "type": "string"
+            },
+            {
+              "id": "f9af8353-27c5-41ab-af11-5e911f8cd158",
+              "name": "SENDER_NAME",
+              "value": "Averloan Solutions",
+              "type": "string"
+            },
+            {
+              "id": "b2b83c1f-c567-4e70-a404-825dc3b2f0e1",
+              "name": "SELECTED_EMPLOYEES",
+              "value": "[]",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        752,
+        112
+      ],
+      "id": "d2bdaeb3-4a45-44b3-840b-0a4a6bc40d62",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                5,
+                4,
+                6
+              ],
+              "triggerAtHour": 18,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        448,
+        336
+      ],
+      "id": "825b87b1-bee3-4448-9fcb-9b8025e9e85c",
+      "name": "6 :30 pm Schedule Trigger3"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                5,
+                4,
+                6
+              ],
+              "triggerAtHour": 17
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        448,
+        160
+      ],
+      "id": "10d3000a-38c3-4d69-87ac-96760ee8135c",
+      "name": "5 pm Schedule Trigger2"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                5,
+                4,
+                6
+              ],
+              "triggerAtHour": 13
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        448,
+        -16
+      ],
+      "id": "f22af1ad-f92e-4e28-87a9-94186d33d6cd",
+      "name": "1 pm Schedule Trigger1"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                5,
+                4,
+                6
+              ],
+              "triggerAtHour": 10
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        448,
+        -192
+      ],
+      "id": "029843a8-774f-4568-9165-c391922f7b59",
+      "name": "10am Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3fde0b8f-dc6c-4bbd-b995-49aee69114d4",
+              "leftValue": "={{$json.route}}",
+              "rightValue": "ESCALATION",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2112,
+        368
+      ],
+      "id": "f02d12c9-b241-4f3c-a478-7ed9835ac1c0",
+      "name": "3rdWorkflow"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Jb4rmXLiDAfkxaz2",
+          "mode": "id",
+          "cachedResultUrl": "/workflow/Jb4rmXLiDAfkxaz2"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2400,
+        208
+      ],
+      "id": "cfa8e10f-e272-43fb-b963-63ccbf4b9f20",
+      "name": "Call 'C3Activity'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "hxfETWpIJ8ogKTBi",
+          "mode": "id",
+          "cachedResultUrl": "/workflow/hxfETWpIJ8ogKTBi"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2368,
+        -208
+      ],
+      "id": "d2789116-b437-4753-88d9-dfd23f8b3549",
+      "name": "Call 'C2ActivityDealMakeEmailResponsive'"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Renewal alert code node": {
+      "main": [
+        [
+          {
+            "node": "2ndWorkflow",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "3rdWorkflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "data share to 3rd workflow": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Renewal alert code node",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Activities HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Users HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Deals HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Fetch Activities HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Users HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Deals HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6 :30 pm Schedule Trigger3": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5 pm Schedule Trigger2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1 pm Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10am Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3rdWorkflow": {
+      "main": [
+        [
+          {
+            "node": "Call 'C3Activity'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2ndWorkflow": {
+      "main": [
+        [
+          {
+            "node": "Call 'C2ActivityDealMakeEmailResponsive'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "83006f51-9051-4906-a56f-7ed51bfbd5df",
+  "meta": {
+    "instanceId": "f8721a2f491e95c5e6129a6e36c27a6ad54a391f13843e10874c1c64d7cca928"
+  },
+  "id": "r3pzPew2CZAlDVgt",
+  "tags": []
+}
